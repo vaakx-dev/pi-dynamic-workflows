@@ -93,9 +93,10 @@ export async function runWorkflow<T = unknown>(script: string, options: Workflow
     throwIfAborted();
     if (budget.total !== null && budget.remaining() <= 0) throw new Error("workflow token budget exhausted");
     const assignedPhase = agentOptions.phase ?? state.currentPhase;
-    const label = agentOptions.label?.trim() || defaultAgentLabel(assignedPhase, state.agentCount + 1);
+    const requestedLabel = agentOptions.label?.trim();
     return limiter(async () => {
       state.agentCount++;
+      const label = requestedLabel || defaultAgentLabel(assignedPhase, state.agentCount);
       options.onAgentStart?.({ label, phase: assignedPhase, prompt });
       try {
         throwIfAborted();
@@ -112,6 +113,7 @@ export async function runWorkflow<T = unknown>(script: string, options: Workflow
       } catch (error) {
         if (options.signal?.aborted) throw error;
         log(`agent ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
+        options.onAgentEnd?.({ label, phase: assignedPhase, result: null });
         return null;
       }
     });
