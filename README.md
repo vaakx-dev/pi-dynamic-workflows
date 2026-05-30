@@ -2,6 +2,8 @@
 
 > Claude-Code-style dynamic workflows for [Pi](https://github.com/earendil-works/pi).
 
+Fork of [Michaelliv/pi-dynamic-workflows](https://github.com/Michaelliv/pi-dynamic-workflows), updated for `@earendil-works/*` packages with subagent settings inheritance fix.
+
 A Pi extension that adds a `workflow` tool. Instead of one assistant doing everything sequentially, the model writes a small JavaScript script that fans out the work across many isolated subagents, then synthesizes the results.
 
 Great for codebase audits, multi-perspective review, large refactors, and fan-out research.
@@ -10,9 +12,10 @@ Inspired by Anthropic's [dynamic workflows in Claude Code](https://claude.com/bl
 
 ## Install
 
+Clone the repo and install from local path:
+
 ```bash
-pi install npm:pi-dynamic-workflows
-# or from a local checkout
+git clone git@github.com:QuintinShaw/pi-dynamic-workflows.git
 pi install /path/to/pi-dynamic-workflows
 ```
 
