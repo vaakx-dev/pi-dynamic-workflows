@@ -12,7 +12,7 @@ import {
 import { WorkflowError, WorkflowErrorCode } from "./errors.js";
 import { parseWorkflowScript, runWorkflow, type WorkflowRunResult } from "./workflow.js";
 import { WorkflowManager } from "./workflow-manager.js";
-import { createWorkflowStorage } from "./workflow-saved.js";
+import { createWorkflowStorage, type WorkflowStorage } from "./workflow-saved.js";
 
 const workflowToolSchema = Type.Object({
   script: Type.String({
@@ -54,11 +54,15 @@ export type WorkflowToolInput = {
 export interface WorkflowToolOptions {
   cwd?: string;
   concurrency?: number;
+  /** Shared manager so background runs are reachable from the `/workflows` command. */
+  manager?: WorkflowManager;
+  /** Shared saved-workflow storage. */
+  storage?: WorkflowStorage;
 }
 
 export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<typeof workflowToolSchema, any> {
-  const manager = new WorkflowManager({ cwd: options.cwd, concurrency: options.concurrency });
-  const _storage = createWorkflowStorage(options.cwd ?? process.cwd());
+  const manager = options.manager ?? new WorkflowManager({ cwd: options.cwd, concurrency: options.concurrency });
+  const _storage = options.storage ?? createWorkflowStorage(options.cwd ?? process.cwd());
 
   return defineTool({
     name: "workflow",
@@ -103,8 +107,8 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
               text: [
                 `Workflow "${parsed.meta.name}" started in background.`,
                 `Run ID: ${runId}`,
-                `Use /workflow status ${runId} to check progress.`,
-                `Use /workflow stop ${runId} to cancel.`,
+                `Use /workflows status ${runId} to check progress.`,
+                `Use /workflows stop ${runId} to cancel.`,
               ].join("\n"),
             },
           ],

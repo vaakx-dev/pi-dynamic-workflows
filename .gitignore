@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.pi/
 .env
 .DS_Store
 *.log

@@ -46,6 +46,18 @@ The model writes a workflow script and calls the `workflow` tool. Live progress 
 
 Press `Esc` to cancel a running run; active subagents are aborted and surfaced as skipped.
 
+### Background runs & `/workflows`
+
+Ask for a background workflow (the model passes `background: true`) and it runs without blocking your session. Manage it with the `/workflows` command:
+
+```text
+/workflows                 # list runs (default)
+/workflows status <id>     # show a run's progress
+/workflows stop <id>       # abort a running run
+/workflows pause <id>      # pause a running run
+/workflows rm <id>         # remove a run from the list
+```
+
 ## Workflow script shape
 
 A workflow is plain JavaScript. The first statement must export literal metadata:
@@ -121,6 +133,7 @@ Scripts run inside a Node `vm` sandbox. Intentionally unavailable: `Date.now()`,
 - **Structured output** — JSON-Schema-validated subagent results
 - **Real token & cost accounting** — read from each subagent's SDK session (input / output / total / cost), with a character estimate only as fallback when a provider reports no usage; `budget` gates on the real total
 - **Real per-agent / per-phase model routing** — `opts.model` and `meta.phases[].model` actually select the model (resolved against your authed model registry), with graceful fallback
+- **`/workflows` command** — list, inspect, stop, pause, and remove background runs; runs started with `background: true` are reachable from the command
 - **Safety limits** — 1000-agent cap (`maxAgents`), per-agent timeout (`agentTimeoutMs`), recoverable-vs-fatal error classification
 - **Live progress + token/cost display**, `Esc` to abort
 - **Log persistence** to `.pi/workflows/runs/`
@@ -129,7 +142,6 @@ Scripts run inside a Node `vm` sandbox. Intentionally unavailable: `Date.now()`,
 
 Tracked toward closer parity with Claude Code dynamic workflows:
 
-- **Command surface** — `/workflows` (list / status / stop) and reachable background runs
 - **Resume** — journaled results, replay the unchanged prefix, run the rest live
 - **Worktree isolation** for parallel edits, and **bundled `/deep-research`**
 - **Saved workflows** as `/<name>` slash commands
