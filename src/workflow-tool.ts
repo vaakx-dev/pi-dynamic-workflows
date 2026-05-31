@@ -4,13 +4,12 @@ import { Type } from "typebox";
 import {
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
-  preview,
   recomputeWorkflowSnapshot,
   renderWorkflowText,
   type WorkflowSnapshot,
 } from "./display.js";
 import { WorkflowError, WorkflowErrorCode } from "./errors.js";
-import { parseWorkflowScript, runWorkflow, type WorkflowRunResult } from "./workflow.js";
+import { parseWorkflowScript, type WorkflowRunResult } from "./workflow.js";
 import { WorkflowManager } from "./workflow-manager.js";
 import { createWorkflowStorage, type WorkflowStorage } from "./workflow-saved.js";
 
@@ -62,8 +61,13 @@ export interface WorkflowToolOptions {
 
 export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<typeof workflowToolSchema, any> {
   const storage = options.storage ?? createWorkflowStorage(options.cwd ?? process.cwd());
-  const manager = options.manager ?? new WorkflowManager({ cwd: options.cwd, concurrency: options.concurrency });
-  const loadSavedWorkflow = (name: string) => storage.load(name)?.script;
+  const manager =
+    options.manager ??
+    new WorkflowManager({
+      cwd: options.cwd,
+      concurrency: options.concurrency,
+      loadSavedWorkflow: (name: string) => storage.load(name)?.script,
+    });
 
   return defineTool({
     name: "workflow",
@@ -95,7 +99,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     prepareArguments(args) {
       return normalizeWorkflowToolArgs(args);
     },
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, onUpdate, _ctx) {
       const script = normalizeWorkflowScript(params.script);
       const parsed = parseWorkflowScript(script);
 
@@ -118,7 +122,10 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         };
       }
 
-      // Synchronous execution (blocking)
+      // Synchronous execution (blocking) — but routed through the manager so the
+      // run shows up live in the /workflows navigator and the task panel while it
+      // runs, then stays in history afterwards. We still block on the result and
+      // return it inline, so the model gets the full output in the same turn.
       let snapshot: WorkflowSnapshot = createWorkflowSnapshot(parsed.meta);
       const display = createToolUpdateWorkflowDisplay(onUpdate, undefined, {
         key: "workflow",
@@ -128,55 +135,15 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         showResultPreviews: false,
       });
 
-      const update = () => {
-        snapshot = recomputeWorkflowSnapshot(snapshot);
-        display.update(snapshot);
-      };
-
       let result: WorkflowRunResult;
       try {
-        result = await runWorkflow(script, {
-          cwd: options.cwd ?? ctx.cwd,
-          args: params.args,
-          signal,
-          concurrency: options.concurrency,
+        result = await manager.runSync(script, params.args, {
           maxAgents: params.maxAgents,
           agentTimeoutMs: params.agentTimeoutMs,
-          loadSavedWorkflow,
-          onLog(message) {
-            snapshot.logs.push(message);
-            update();
-          },
-          onPhase(title) {
-            snapshot.currentPhase = title;
-            if (!snapshot.phases.includes(title)) snapshot.phases.push(title);
-            update();
-          },
-          onAgentStart(event) {
-            if (signal?.aborted) throw new Error("Workflow was aborted");
-            snapshot.agents.push({
-              id: snapshot.agents.length + 1,
-              label: event.label,
-              phase: event.phase,
-              prompt: event.prompt,
-              status: "running",
-            });
-            update();
-          },
-          onAgentEnd(event) {
-            const agent = [...snapshot.agents]
-              .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
-            if (agent) {
-              agent.status = event.result === null ? "error" : "done";
-              agent.resultPreview = preview(event.result);
-              agent.tokens = event.tokens;
-            }
-            update();
-          },
-          onTokenUsage(usage) {
-            snapshot.tokenUsage = usage;
-            update();
+          externalSignal: signal,
+          onProgress(live) {
+            snapshot = recomputeWorkflowSnapshot(live);
+            display.update(snapshot);
           },
         });
       } catch (error) {

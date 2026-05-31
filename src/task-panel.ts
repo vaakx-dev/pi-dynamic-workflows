@@ -39,9 +39,13 @@ export function installResultDelivery(pi: ExtensionAPI, manager: WorkflowManager
 
   manager.on("complete", ({ runId }: { runId: string }) => {
     const run = manager.getRun(runId);
-    if (run) void pi.sendMessage({ customType: "workflow-result", content: deliverText(run), display: true });
+    // Only background/resumed runs are delivered: a foreground (sync) run already
+    // returns its result inline as the tool result, so re-delivering would dup it.
+    if (run?.background)
+      void pi.sendMessage({ customType: "workflow-result", content: deliverText(run), display: true });
   });
   manager.on("error", ({ runId, error }: { runId: string; error?: { message?: string } }) => {
+    if (!manager.getRun(runId)?.background) return;
     void pi.sendMessage({
       customType: "workflow-result",
       content: `✗ Workflow ${runId} failed: ${error?.message ?? "unknown error"}`,

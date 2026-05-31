@@ -22,6 +22,7 @@ test("installResultDelivery delivers a finished run's report into the conversati
   installResultDelivery(pi, manager); // idempotent — must not double-subscribe
 
   manager.runs.set("run-1", {
+    background: true,
     snapshot: { name: "research", agentCount: 3 },
     result: { result: { report: "Here is the report." }, tokenUsage: { total: 1234 } },
   });
@@ -33,11 +34,29 @@ test("installResultDelivery delivers a finished run's report into the conversati
   assert.match(sent[0], /1,234 tokens/);
 });
 
-test("installResultDelivery reports failures", () => {
+test("installResultDelivery does not deliver a foreground (sync) run's result", () => {
   const manager = fakeManager();
   const sent: string[] = [];
   const pi: any = { sendMessage: async (msg: any) => sent.push(msg.content) };
   installResultDelivery(pi, manager);
+
+  // Foreground run: result is returned inline as the tool result, so delivering
+  // it again into the chat would duplicate it.
+  manager.runs.set("run-fg", {
+    background: false,
+    snapshot: { name: "sync", agentCount: 1 },
+    result: { result: { report: "inline" } },
+  });
+  manager.emit("complete", { runId: "run-fg" });
+  assert.equal(sent.length, 0, "foreground runs are not re-delivered");
+});
+
+test("installResultDelivery reports failures (background only)", () => {
+  const manager = fakeManager();
+  const sent: string[] = [];
+  const pi: any = { sendMessage: async (msg: any) => sent.push(msg.content) };
+  installResultDelivery(pi, manager);
+  manager.runs.set("run-9", { background: true });
   manager.emit("error", { runId: "run-9", error: { message: "boom" } });
   assert.match(sent[0], /run-9 failed: boom/);
 });
