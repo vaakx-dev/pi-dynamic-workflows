@@ -27,7 +27,8 @@ const workflowToolSchema = Type.Object({
   ),
   background: Type.Optional(
     Type.Boolean({
-      description: "Run the workflow in the background. Default: false. When true, returns immediately with a run ID.",
+      description:
+        "Run the workflow in the background. Default: true — the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when it finishes. Set to false only when you need the result inline in this same turn (the call will block until the workflow completes).",
     }),
   ),
   maxAgents: Type.Optional(
@@ -92,7 +93,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       "For workflow, include a final synthesis/assertion agent when combining multiple subagent results; return a compact JSON-serializable value with ok/verdict plus the important outputs.",
       "For workflow, if agent() needs machine-readable output, pass a plain JSON Schema via opts.schema; agent() will return the validated object. Use JSON Schema syntax, not TypeScript or TypeBox constructors.",
       "For workflow, do not assume the parent assistant has repository code context inside subagents; include enough task context and relevant paths in each agent prompt.",
-      "For workflow, set background: true to run asynchronously. The workflow will return immediately with a run ID that can be used to check status later.",
+      "For workflow, runs are background by default: the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when the run finishes. Pass background: false only when you must use the result inline in this same turn (it will block).",
       "For workflow, you may call `await workflow('saved-name', argsObject)` to run a saved workflow inline and use its result; nesting is one level deep only, and the global 16-concurrent / 1000-total caps hold across the nesting.",
     ],
     parameters: workflowToolSchema,
@@ -103,18 +104,22 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       const script = normalizeWorkflowScript(params.script);
       const parsed = parseWorkflowScript(script);
 
-      // Background execution
-      if (params.background) {
+      // Background execution is the default: return immediately so the turn ends
+      // and the user isn't blocked. The result is delivered back into the
+      // conversation when the run finishes (see installResultDelivery). Only an
+      // explicit `background: false` blocks for the result inline.
+      if (params.background ?? true) {
         const { runId } = manager.startInBackground(script, params.args);
         return {
           content: [
             {
               type: "text",
               text: [
-                `Workflow "${parsed.meta.name}" started in background.`,
+                `Workflow "${parsed.meta.name}" started in the background.`,
                 `Run ID: ${runId}`,
-                `Use /workflows status ${runId} to check progress.`,
-                `Use /workflows stop ${runId} to cancel.`,
+                "It will keep running while you do other things; its result will be",
+                "delivered back into the conversation when it finishes.",
+                `Track or cancel it with /workflows status ${runId} or /workflows stop ${runId}.`,
               ].join("\n"),
             },
           ],

@@ -24,31 +24,46 @@ function deliverText(run: ManagedRun): string {
     r && typeof r.report === "string" && r.report.trim() ? r.report : JSON.stringify(run.result?.result, null, 2);
   const tokens = run.result?.tokenUsage ? ` · ${run.result.tokenUsage.total.toLocaleString()} tokens` : "";
   const agents = run.result?.agentCount ?? run.snapshot.agentCount;
-  return `✓ Workflow "${run.snapshot.name}" finished (${agents} agents${tokens}).\n\n${body}`;
+  return [
+    `✓ Background workflow "${run.snapshot.name}" finished (${agents} agents${tokens}).`,
+    "Continue helping the user based on this result.",
+    "",
+    body,
+  ].join("\n");
 }
 
 /**
- * Deliver a background run's result into the conversation when it completes or
- * fails. Set up once per extension; idempotent via an internal guard.
+ * When a background run finishes (or fails), deliver its result back into the
+ * conversation AND continue the turn so the assistant can act on it — without
+ * blocking the user meanwhile:
+ *
+ *  - `triggerTurn: true` starts a fresh turn when the agent is idle, feeding the
+ *    result to the model so the paused conversation continues.
+ *  - `deliverAs: "followUp"` means that if the user is busy in another turn, the
+ *    result is queued and picked up after that turn finishes — never interrupting.
+ *
+ * Set up once per extension; idempotent via an internal guard.
  */
 export function installResultDelivery(pi: ExtensionAPI, manager: WorkflowManager): void {
   if ((manager as unknown as { __deliveryInstalled?: boolean }).__deliveryInstalled) return;
   (manager as unknown as { __deliveryInstalled?: boolean }).__deliveryInstalled = true;
 
+  const deliver = (content: string) => {
+    void pi.sendMessage(
+      { customType: "workflow-result", content, display: true },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  };
+
   manager.on("complete", ({ runId }: { runId: string }) => {
     const run = manager.getRun(runId);
     // Only background/resumed runs are delivered: a foreground (sync) run already
     // returns its result inline as the tool result, so re-delivering would dup it.
-    if (run?.background)
-      void pi.sendMessage({ customType: "workflow-result", content: deliverText(run), display: true });
+    if (run?.background) deliver(deliverText(run));
   });
   manager.on("error", ({ runId, error }: { runId: string; error?: { message?: string } }) => {
     if (!manager.getRun(runId)?.background) return;
-    void pi.sendMessage({
-      customType: "workflow-result",
-      content: `✗ Workflow ${runId} failed: ${error?.message ?? "unknown error"}`,
-      display: true,
-    });
+    deliver(`✗ Background workflow ${runId} failed: ${error?.message ?? "unknown error"}`);
   });
 }
 

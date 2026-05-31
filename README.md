@@ -25,7 +25,7 @@ Inspired by Anthropic's [dynamic workflows in Claude Code](https://claude.com/bl
 - 🌲 **Git worktree isolation** — `isolation: "worktree"` gives an agent its own branch so parallel agents can edit the same files without clobbering each other.
 - 🔭 **Bundled `/deep-research`** — fans out **real** web searches, fetches sources, keeps only multi-source-supported claims, and writes a cited report. Plus `/adversarial-review` for skeptic-vetted findings.
 - 🧩 **Saved & nested workflows** — turn any run into a `/<name>` slash command; compose saved workflows from inside other scripts.
-- 🪟 **Background + live task panel** — run workflows in the background, watch a "Workflows running" panel under your input, and get the result delivered back into the chat when it finishes.
+- 🪟 **Non-blocking by default + live task panel** — workflows run in the background: the turn ends immediately so you can keep chatting or start other tasks, a "Workflows running" panel tracks them under your input, and when one finishes its result is delivered back and the conversation **auto-continues** (queued politely after whatever you're doing, never interrupting).
 - 🌈 **Workflows mode in the input box** — type `workflow`/`workflows` and the word turns into a flowing rainbow, arming a forced workflow for that message. One Backspace right after the word disarms it (turns plain white) without deleting it.
 
 > **This is a heavily extended fork.** The [upstream project](https://github.com/Michaelliv/pi-dynamic-workflows) shipped the core script runtime; here, every advertised capability is actually **implemented, real-tested against the Pi SDK, and shipped** — see the [comparison](#whats-different-from-upstream) below.
@@ -57,7 +57,7 @@ Just ask for a workflow in plain language:
 Run a workflow to audit every route under src/routes/ for missing auth checks.
 ```
 
-Pi writes the script and streams compact progress inline:
+Pi writes the script and runs it in the background — your turn ends right away, and a compact progress view streams in the "Workflows running" task panel while you keep working:
 
 ```text
 ◆ Workflow: auth_audit (5/5 done · 48,210 tokens · $0.0131)
@@ -71,7 +71,7 @@ Pi writes the script and streams compact progress inline:
     #5 ✓ adversarial recheck
 ```
 
-Press `Esc` to cancel; active subagents are aborted and surfaced as skipped.
+When it finishes, the result is delivered back into the conversation and the turn auto-continues — queued after whatever you're doing so it never interrupts. (Need the result inline in the same turn instead? The model can pass `background: false` to block.)
 
 ## What's different from upstream
 
@@ -89,7 +89,7 @@ This fork turns the original's roadmap into working, tested features:
 | **`/deep-research` with real web access** | — | ✅ live search + cross-checking |
 | **Saved workflows as `/<name>`** | — | ✅ |
 | **Nested `workflow()`** | — | ✅ shares the global caps |
-| **Background runs + live task panel + result delivery** | — | ✅ |
+| **Non-blocking background runs + live task panel + auto-continue delivery** | — | ✅ |
 | Test suite | minimal | ✅ 43 tests + real Pi end-to-end |
 
 <sub>*Upstream injected the requested model as a text line in the prompt; it never changed the subagent's actual model.</sub>

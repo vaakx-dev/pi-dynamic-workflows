@@ -13,10 +13,10 @@ function fakeManager() {
   return m;
 }
 
-test("installResultDelivery delivers a finished run's report into the conversation", () => {
+test("installResultDelivery delivers a finished run's report and continues the turn", () => {
   const manager = fakeManager();
-  const sent: string[] = [];
-  const pi: any = { sendMessage: async (msg: any) => sent.push(msg.content) };
+  const sent: Array<{ content: string; options: any }> = [];
+  const pi: any = { sendMessage: async (msg: any, options: any) => sent.push({ content: msg.content, options }) };
 
   installResultDelivery(pi, manager);
   installResultDelivery(pi, manager); // idempotent — must not double-subscribe
@@ -29,9 +29,13 @@ test("installResultDelivery delivers a finished run's report into the conversati
   manager.emit("complete", { runId: "run-1" });
 
   assert.equal(sent.length, 1, "delivered exactly once despite double install");
-  assert.match(sent[0], /research/);
-  assert.match(sent[0], /Here is the report\./);
-  assert.match(sent[0], /1,234 tokens/);
+  assert.match(sent[0].content, /research/);
+  assert.match(sent[0].content, /Here is the report\./);
+  assert.match(sent[0].content, /1,234 tokens/);
+  assert.match(sent[0].content, /Continue helping the user/);
+  // Triggers a turn when idle, and queues (never interrupts) when the user is busy.
+  assert.equal(sent[0].options?.triggerTurn, true);
+  assert.equal(sent[0].options?.deliverAs, "followUp");
 });
 
 test("installResultDelivery does not deliver a foreground (sync) run's result", () => {
