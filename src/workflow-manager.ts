@@ -58,6 +58,8 @@ export interface WorkflowManagerOptions {
   loadSavedWorkflow?: (name: string) => string | undefined;
   /** Inject a custom agent runner (tests); defaults to a real subagent session. */
   agent?: Pick<WorkflowAgent, "run">;
+  /** The session's main model (provider/id), for auto-tiering explore agents. */
+  mainModel?: string;
 }
 
 export class WorkflowManager extends EventEmitter {
@@ -67,6 +69,8 @@ export class WorkflowManager extends EventEmitter {
   private concurrency: number;
   private loadSavedWorkflow?: (name: string) => string | undefined;
   private agent?: Pick<WorkflowAgent, "run">;
+  /** The session's main model (provider/id), for auto-tiering explore agents. */
+  private mainModel?: string;
 
   constructor(options: WorkflowManagerOptions = {}) {
     super();
@@ -74,7 +78,13 @@ export class WorkflowManager extends EventEmitter {
     this.concurrency = options.concurrency ?? 8;
     this.loadSavedWorkflow = options.loadSavedWorkflow;
     this.agent = options.agent;
+    this.mainModel = options.mainModel;
     this.persistence = createRunPersistence(this.cwd);
+  }
+
+  /** Set the session's main model (provider/id). Used to auto-tier explore agents. */
+  setMainModel(spec: string | undefined): void {
+    this.mainModel = spec;
   }
 
   /**
@@ -189,6 +199,7 @@ export class WorkflowManager extends EventEmitter {
         cwd: this.cwd,
         args,
         agent: this.agent,
+        mainModel: this.mainModel,
         signal: managed.controller.signal,
         concurrency: this.concurrency,
         maxAgents,
@@ -222,6 +233,7 @@ export class WorkflowManager extends EventEmitter {
             phase: event.phase,
             prompt: event.prompt,
             status: "running",
+            model: event.model,
           });
           this.emit("agentStart", { runId: managed.runId, ...event });
           progress();
@@ -234,6 +246,7 @@ export class WorkflowManager extends EventEmitter {
             agent.status = event.result === null ? "error" : "done";
             agent.resultPreview = preview(event.result);
             agent.tokens = event.tokens;
+            if (event.model) agent.model = event.model;
           }
           this.emit("agentEnd", { runId: managed.runId, ...event });
           progress();

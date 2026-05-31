@@ -1,7 +1,7 @@
 export type { AdversarialReviewConfig } from "./adversarial-review.js";
 export { generateAdversarialReviewWorkflow, generateMultiPerspectiveWorkflow } from "./adversarial-review.js";
 export type { AgentRunOptions, AgentRunResult, WorkflowAgentOptions } from "./agent.js";
-export { WorkflowAgent } from "./agent.js";
+export { listAvailableModelSpecs, WorkflowAgent } from "./agent.js";
 export type { AutoWorkflowConfig } from "./auto-workflow.js";
 export { shouldUseWorkflow, suggestWorkflowScript } from "./auto-workflow.js";
 export { registerBuiltinWorkflows } from "./builtin-commands.js";

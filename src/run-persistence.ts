@@ -18,6 +18,8 @@ export interface PersistedAgentState {
   error?: string;
   startedAt?: string;
   endedAt?: string;
+  /** The model this agent ran on (provider/id), when known. */
+  model?: string;
 }
 
 export interface PersistedRunState {

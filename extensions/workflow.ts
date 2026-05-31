@@ -35,6 +35,9 @@ export default function extension(pi: ExtensionAPI) {
     if (!active.includes(workflowTool.name)) {
       pi.setActiveTools([...active, workflowTool.name]);
     }
+    // Tell the manager the session's main model so "explore" agents auto-tier
+    // down to a lighter same-family sibling (e.g. Claude → Haiku).
+    manager.setMainModel(ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined);
     // Live "workflows running" panel below the input (focus + enter to open).
     installTaskPanel(pi, manager, ctx.ui, { storage, cwd });
     if (!editorInstalled) {

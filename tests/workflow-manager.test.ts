@@ -83,3 +83,20 @@ test(
     assert.equal(listedWhileRunning, 1, "the run shows as running in listRuns mid-flight");
   }),
 );
+
+test(
+  "each agent's model is recorded for /workflows: explicit opts.model, else the main model",
+  withTempCwd(async (cwd) => {
+    const manager = new WorkflowManager({ cwd, agent: fakeAgent(), mainModel: "anthropic/claude-opus-4-8" });
+    const script = `export const meta = { name: 'model_demo', description: 'per-agent models' }
+const a = await agent('explore', { label: 'scan', model: 'openai/gpt-5-mini' })
+const b = await agent('reason', { label: 'judge' })
+return { a, b }`;
+    await manager.runSync(script);
+
+    const run = manager.listRuns().find((r) => r.workflowName === "model_demo");
+    const byLabel = Object.fromEntries((run?.agents ?? []).map((a) => [a.label, a.model]));
+    assert.equal(byLabel.scan, "openai/gpt-5-mini", "explicit per-agent model is recorded");
+    assert.equal(byLabel.judge, "anthropic/claude-opus-4-8", "default agent shows the main model");
+  }),
+);

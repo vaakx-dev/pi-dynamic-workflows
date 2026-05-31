@@ -48,6 +48,8 @@ export interface SharedRuntime {
 export interface WorkflowRunOptions extends WorkflowAgentOptions {
   args?: unknown;
   agent?: Pick<WorkflowAgent, "run">;
+  /** The session's main model (provider/id), shown in /workflows for default agents. */
+  mainModel?: string;
   concurrency?: number;
   tokenBudget?: number | null;
   signal?: AbortSignal;
@@ -72,7 +74,14 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
   onAgentStart?: (event: { label: string; phase?: string; prompt: string; model?: string }) => void;
-  onAgentEnd?: (event: { label: string; phase?: string; result: unknown; tokens?: number; worktree?: string }) => void;
+  onAgentEnd?: (event: {
+    label: string;
+    phase?: string;
+    result: unknown;
+    tokens?: number;
+    worktree?: string;
+    model?: string;
+  }) => void;
   onTokenUsage?: (usage: { input: number; output: number; total: number; cost: number }) => void;
 }
 
@@ -96,6 +105,12 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
   label?: string;
   phase?: string;
   schema?: TSchemaDef;
+  /**
+   * Run this agent on a specific model (`provider/modelId` or a bare `modelId`).
+   * The workflow author chooses per-agent models per the routing policy in the
+   * tool guidelines (e.g. a lighter model for exploration, the main model for
+   * analysis). When omitted, the session's main model is used.
+   */
   model?: string;
   isolation?: "worktree";
   agentType?: string;
@@ -203,6 +218,10 @@ export async function runWorkflow<T = unknown>(
     const requestedLabel = agentOptions.label?.trim();
     // Precedence: explicit agentOptions.model > phase model (meta.phases[].model).
     const modelSpec = agentOptions.model ?? resolveModelForPhase(assignedPhase, routingConfig);
+    // For display in /workflows: the model this agent runs on — its explicit/phase
+    // spec, else the session's main model. The real resolved id overrides this via
+    // onModelResolved once the subagent session is created.
+    let displayModel = modelSpec ?? options.mainModel;
 
     // Deterministic resume key: assigned at lexical call time, before the limiter,
     // so parallel()/pipeline() fan-out is reproducible for a fixed script.
@@ -215,8 +234,8 @@ export async function runWorkflow<T = unknown>(
     if (cached && cached.hash === callHash) {
       shared.agentCount++;
       const label = requestedLabel || defaultAgentLabel(assignedPhase, shared.agentCount);
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: modelSpec });
-      options.onAgentEnd?.({ label, phase: assignedPhase, result: cached.result, tokens: 0 });
+      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
+      options.onAgentEnd?.({ label, phase: assignedPhase, result: cached.result, tokens: 0, model: displayModel });
       return cached.result;
     }
 
@@ -225,7 +244,7 @@ export async function runWorkflow<T = unknown>(
       const label = requestedLabel || defaultAgentLabel(assignedPhase, shared.agentCount);
       const timeout = agentOptions.timeoutMs ?? agentTimeoutMs;
 
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: modelSpec });
+      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
 
       // Optional per-agent worktree isolation (deterministic name -> stable resume keys).
       let worktree: Worktree | undefined;
@@ -262,6 +281,9 @@ export async function runWorkflow<T = unknown>(
             instructions: buildAgentInstructions(assignedPhase, agentOptions),
             model: modelSpec,
             cwd: runCwd,
+            onModelResolved: (id: string) => {
+              displayModel = id;
+            },
             onUsage: (u: AgentUsage) => {
               usage = u;
             },
@@ -274,7 +296,7 @@ export async function runWorkflow<T = unknown>(
 
         const tokens = recordTokens(result);
         options.onAgentJournal?.({ index: callIndex, hash: callHash, result });
-        options.onAgentEnd?.({ label, phase: assignedPhase, result, tokens, worktree: runCwd });
+        options.onAgentEnd?.({ label, phase: assignedPhase, result, tokens, worktree: runCwd, model: displayModel });
         return result;
       } catch (error) {
         if (options.signal?.aborted) throw error;

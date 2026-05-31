@@ -63,6 +63,14 @@ interface AgentRow {
   status: string;
   phase?: string;
   tokens?: number;
+  model?: string;
+}
+
+/** Short, human-friendly model label: drop the provider prefix for display. */
+function shortModel(model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  const slash = model.indexOf("/");
+  return slash > 0 ? model.slice(slash + 1) : model;
 }
 
 /** Reads run/phase/agent data from the manager, preferring live snapshots. */
@@ -127,7 +135,7 @@ export class NavigatorModel {
     if (!snap) return [];
     return snap.agents
       .filter((a) => (a.phase ?? "(no phase)") === phase)
-      .map((a) => ({ id: a.id, label: a.label, status: a.status, phase: a.phase, tokens: a.tokens }));
+      .map((a) => ({ id: a.id, label: a.label, status: a.status, phase: a.phase, tokens: a.tokens, model: a.model }));
   }
 
   agentDetail(runId: string, agentId: number): WorkflowAgentSnapshot | undefined {
@@ -150,6 +158,7 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
       resultPreview:
         a.result == null ? undefined : String(typeof a.result === "string" ? a.result : JSON.stringify(a.result)),
       error: a.error,
+      model: a.model,
     })),
     agentCount: p.agents.length,
     runningCount: p.agents.filter((a) => a.status === "running").length,
@@ -293,8 +302,9 @@ export function renderNavigator(
     lines.push(theme.bold(`${model.runName(state.runId)} › ${state.phase}`));
     agents.forEach((a, i) => {
       const icon = STATUS_ICON[a.status] ?? "?";
-      const tok = a.tokens ? dim(` ${fmtTokens(a.tokens)}`) : "";
-      lines.push(sel(i, `${icon} ${a.label}${tok}`));
+      const mdl = shortModel(a.model);
+      const meta = [mdl, a.tokens ? fmtTokens(a.tokens) : undefined].filter(Boolean).join(" · ");
+      lines.push(sel(i, `${icon} ${a.label}${meta ? dim(`  ${meta}`) : ""}`));
     });
   } else if (state.kind === "detail" && state.runId && state.agentId != null) {
     const a = model.agentDetail(state.runId, state.agentId);
@@ -302,6 +312,7 @@ export function renderNavigator(
     if (a) {
       const body: string[] = [];
       body.push(dim("Status: ") + (a.status ?? ""));
+      if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
       if (a.error) body.push(dim("Error: ") + a.error);
       body.push("", dim("Prompt:"));
       body.push(...wrap(a.prompt ?? "", width));
@@ -454,9 +465,20 @@ export function openWorkflowNavigator(
             if (id) ui.notify(manager.stop(id) ? `Stopped ${id}` : `Cannot stop ${id}`, "info");
             break;
           }
-          case "restart":
-            ui.notify("Restarting a single agent isn't supported yet", "warning");
+          case "restart": {
+            // Restart re-runs the whole workflow from scratch as a fresh
+            // background run (per-agent restart isn't meaningful — agents are
+            // driven by the script). The new run auto-delivers when it finishes.
+            const id = state.activeRunId(model);
+            const run = id ? manager.listRuns().find((r) => r.runId === id) : undefined;
+            if (!run?.script) {
+              ui.notify(id ? `Cannot restart ${id} (no script saved)` : "No run selected to restart", "warning");
+              break;
+            }
+            const { runId: newId } = manager.startInBackground(run.script, run.args);
+            ui.notify(`Restarted ${run.workflowName || "workflow"} as ${newId}`, "info");
             break;
+          }
           case "save": {
             const id = state.activeRunId(model);
             const run = id ? manager.listRuns().find((r) => r.runId === id) : undefined;

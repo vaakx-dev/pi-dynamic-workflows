@@ -106,7 +106,7 @@ This fork turns the original's roadmap into working, tested features:
 /adversarial-review <task> # findings cross-checked by skeptical reviewers
 ```
 
-In the **interactive navigator**: `↑/↓` (or `j/k`) select · `enter`/`→` open · `esc`/`←` back · `j/k` scroll detail · `p` pause/resume · `x` stop · `s` save · `q` quit.
+In the **interactive navigator**: `↑/↓` (or `j/k`) select · `enter`/`→` open · `esc`/`←` back · `j/k` scroll detail · `p` pause · `x` stop · `r` restart (re-runs the whole workflow as a fresh background run) · `s` save · `q` quit. The agents list and each agent's detail show **which model it ran on**.
 
 ### Workflows mode (input box)
 
@@ -157,7 +157,9 @@ return { inventory, summary }
 | `isolation` | `"worktree"` | Run this agent in its own throwaway git worktree (parallel edits without conflict) |
 | `timeoutMs` | number | Override the default 5-minute agent timeout |
 
-Models can also be set per phase via `meta.phases[].model`. Precedence: `opts.model` > phase model > session default; an unknown model logs a warning and falls back.
+Models can also be set per phase via `meta.phases[].model`. Precedence: `opts.model` > phase model > session default; an unknown model logs a warning and falls back. The model each agent ran on is recorded and shown in the `/workflows` navigator.
+
+**Model routing is decided by the assistant, not hardcoded.** When it writes a workflow, Pi is given the routing policy and the list of your currently authenticated models, and picks each agent's `model` accordingly: a lighter same-family model (one tier below your main model — e.g. Claude→Haiku, GPT→a mini) for exploration/search/gathering agents, and your main model for analysis/judgment/decision agents. If you name a specific model, that wins.
 
 ### Structured output
 

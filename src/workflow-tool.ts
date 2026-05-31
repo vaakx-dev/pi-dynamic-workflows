@@ -1,6 +1,7 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { listAvailableModelSpecs } from "./agent.js";
 import {
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
@@ -12,6 +13,26 @@ import { WorkflowError, WorkflowErrorCode } from "./errors.js";
 import { parseWorkflowScript, type WorkflowRunResult } from "./workflow.js";
 import { WorkflowManager } from "./workflow-manager.js";
 import { createWorkflowStorage, type WorkflowStorage } from "./workflow-saved.js";
+
+/**
+ * Per-agent model-routing policy handed to the workflow author (the model). It
+ * states the rule and lists the user's currently available models, then lets the
+ * author choose each agent's model via opts.model — no hardcoded family mapping.
+ */
+function modelRoutingGuideline(): string {
+  const available = listAvailableModelSpecs();
+  const list = available.length
+    ? `The user's currently available models (route only to these) are: ${available.join(", ")}.`
+    : "Use models the user has configured.";
+  return [
+    "For workflow, decide each agent's model yourself via opts.model, following this policy:",
+    "If the user named a specific model, use exactly that.",
+    "Otherwise, for exploration/search/inventory/gathering agents, pick a model one tier BELOW the main model in the SAME family (e.g. Claude→Haiku, ChatGPT/GPT→a mini, DeepSeek→a lighter/flash variant), choosing the closest match from the available list.",
+    "For analysis/synthesis/judgment/decision/verification agents, omit opts.model so the agent runs on the main model.",
+    "Never route to a model that is not in the available list; if no suitable lighter sibling exists, omit opts.model (use the main model).",
+    list,
+  ].join(" ");
+}
 
 const workflowToolSchema = Type.Object({
   script: Type.String({
@@ -92,6 +113,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       "For workflow, failed agent(), parallel(), or pipeline() branches return null and log the failure unless the workflow is aborted. Check for nulls before synthesizing conclusions.",
       "For workflow, include a final synthesis/assertion agent when combining multiple subagent results; return a compact JSON-serializable value with ok/verdict plus the important outputs.",
       "For workflow, if agent() needs machine-readable output, pass a plain JSON Schema via opts.schema; agent() will return the validated object. Use JSON Schema syntax, not TypeScript or TypeBox constructors.",
+      modelRoutingGuideline(),
       "For workflow, do not assume the parent assistant has repository code context inside subagents; include enough task context and relevant paths in each agent prompt.",
       "For workflow, runs are background by default: the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when the run finishes. Pass background: false only when you must use the result inline in this same turn (it will block).",
       "For workflow, you may call `await workflow('saved-name', argsObject)` to run a saved workflow inline and use its result; nesting is one level deep only, and the global 16-concurrent / 1000-total caps hold across the nesting.",

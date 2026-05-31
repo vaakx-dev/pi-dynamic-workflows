@@ -13,6 +13,8 @@ export interface WorkflowAgentSnapshot {
   error?: string;
   /** Tokens used by this agent. */
   tokens?: number;
+  /** The model this agent ran on (provider/id), when known. */
+  model?: string;
 }
 
 export interface WorkflowSnapshot {
