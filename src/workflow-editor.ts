@@ -18,6 +18,7 @@
 
 import { CustomEditor, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { type EffortState, effortDirective, isSubstantive } from "./effort-command.js";
 
 // A trigger is `workflow`/`workflows` (substring, case-insensitive) that is NOT
 // immediately preceded by `/` — so a slash command like `/workflows` or `/workflow`
@@ -221,9 +222,12 @@ export class WorkflowEditor extends CustomEditor {
   }
 }
 
-/** The directive appended to a submitted message when workflows mode is armed. */
-export function buildForcedWorkflowPrompt(text: string): string {
-  return [
+/**
+ * The directive appended to a submitted message when workflows mode is armed.
+ * `extraDirective` (e.g. an effort-tier nudge) is appended when present.
+ */
+export function buildForcedWorkflowPrompt(text: string, extraDirective?: string): string {
+  const lines = [
     text,
     "",
     "---",
@@ -239,7 +243,9 @@ export function buildForcedWorkflowPrompt(text: string): string {
     "- use any skill or command (e.g. pi-subagents, /code-review, deep-research),",
     '- or interpret the word "workflow/workflows" loosely as some other parallel/audit approach.',
     "Even for a small task, wrap it in a minimal `workflow` call with at least one agent().",
-  ].join("\n");
+  ];
+  if (extraDirective) lines.push("", extraDirective);
+  return lines.join("\n");
 }
 
 /**
@@ -249,7 +255,11 @@ export function buildForcedWorkflowPrompt(text: string): string {
 /** The exact name of the workflow tool that workflows mode forces. */
 export const WORKFLOW_TOOL_NAME = "workflow";
 
-export function installWorkflowEditor(pi: ExtensionAPI, ui: ExtensionUIContext): WorkflowModeState {
+export function installWorkflowEditor(
+  pi: ExtensionAPI,
+  ui: ExtensionUIContext,
+  effort?: EffortState,
+): WorkflowModeState {
   const state: WorkflowModeState = { active: false };
 
   ui.setEditorComponent((tui, theme, keybindings) => new WorkflowEditor(tui, theme, keybindings, state));
@@ -269,8 +279,12 @@ export function installWorkflowEditor(pi: ExtensionAPI, ui: ExtensionUIContext):
   // the editor, because the editor's state is reset synchronously by submitValue()
   // BEFORE the input event fires (the actual prompt processing is async).
   pi.on("input", (event: { source?: string; text?: string }) => {
-    if (event.source !== "interactive" || !event.text || !hasTrigger(event.text))
-      return { action: "continue" } as const;
+    if (event.source !== "interactive" || !event.text) return { action: "continue" } as const;
+    // Arm either when the user typed the "workflow(s)" trigger, or when standing
+    // effort mode is on and the message is a substantive request.
+    const triggered = hasTrigger(event.text);
+    const byEffort = !triggered && !!effort && effort.level !== "off" && isSubstantive(event.text);
+    if (!triggered && !byEffort) return { action: "continue" } as const;
     try {
       if (savedTools === undefined) {
         savedTools = pi.getActiveTools?.() ?? [];
@@ -283,7 +297,8 @@ export function installWorkflowEditor(pi: ExtensionAPI, ui: ExtensionUIContext):
     } catch {
       // Tool restriction is best-effort; the directive still forces the workflow.
     }
-    return { action: "transform", text: buildForcedWorkflowPrompt(event.text) } as const;
+    const extra = byEffort && effort ? effortDirective(effort.level) : undefined;
+    return { action: "transform", text: buildForcedWorkflowPrompt(event.text, extra) } as const;
   });
 
   // Restore the user's full tool set once the forced turn completes.

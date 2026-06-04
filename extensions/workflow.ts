@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+  createEffortState,
   createWorkflowStorage,
   createWorkflowTool,
   installResultDelivery,
@@ -7,6 +8,7 @@ import {
   installWorkflowEditor,
   registerAllSavedWorkflows,
   registerBuiltinWorkflows,
+  registerEffortCommand,
   registerWorkflowCommands,
   registerWorkflowModelsCommand,
   WorkflowManager,
@@ -25,6 +27,10 @@ export default function extension(pi: ExtensionAPI) {
   registerWorkflowModelsCommand(pi);
   registerBuiltinWorkflows(pi, { cwd });
   registerAllSavedWorkflows(pi, cwd, storage, manager);
+  // Standing /effort opt-in (off|high|ultra): auto-arms a workflow for substantive
+  // messages, like CC's ultracode. Shared with the editor's input hook below.
+  const effort = createEffortState();
+  registerEffortCommand(pi, effort);
   // "Workflows mode": type `workflow(s)` to arm a forced workflow (animated),
   // Backspace right after the word disarms it. Registers the `input` hook now;
   // the editor itself is installed once the UI is available (session_start).
@@ -51,7 +57,7 @@ export default function extension(pi: ExtensionAPI) {
     // Live "workflows running" panel below the input (focus + enter to open).
     installTaskPanel(pi, manager, ctx.ui, { storage, cwd });
     if (!editorInstalled) {
-      installWorkflowEditor(pi, ctx.ui);
+      installWorkflowEditor(pi, ctx.ui, effort);
       editorInstalled = true;
     }
   });

@@ -27,6 +27,14 @@ export {
   renderWorkflowText,
 } from "./display.js";
 export {
+  createEffortState,
+  type EffortLevel,
+  type EffortState,
+  effortDirective,
+  isSubstantive,
+  registerEffortCommand,
+} from "./effort-command.js";
+export {
   isAbortError,
   isTimeoutError,
   isWorkflowError,
