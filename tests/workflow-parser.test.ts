@@ -5,7 +5,7 @@ import { parseWorkflowScript } from "../src/workflow.js";
 const validScript = `export const meta = {
   name: 'demo_workflow',
   description: 'A useful workflow',
-  whenToUse: 'When testing parser behavior',
+  model: 'provider/default-model',
   phases: [{ title: 'Scan', detail: 'Collect inputs', model: 'default' }]
 }
 
@@ -153,11 +153,20 @@ test("parseWorkflowScript rejects phases without title", () => {
   );
 });
 
-test("parseWorkflowScript rejects whenToUse with wrong type", () => {
+test("parseWorkflowScript rejects meta.model with wrong type", () => {
   assert.throws(
-    () => parseWorkflowScript("export const meta = { name: 'demo', description: 'desc', whenToUse: 123 }"),
+    () => parseWorkflowScript("export const meta = { name: 'demo', description: 'desc', model: 123 }"),
     /must be a string/,
   );
+});
+
+test("parseWorkflowScript still parses a removed/unknown meta field (e.g. whenToUse)", () => {
+  // whenToUse is no longer an official field; a script that still sets it must keep
+  // parsing (it's just ignored), not throw.
+  const parsed = parseWorkflowScript(
+    "export const meta = { name: 'demo', description: 'desc', whenToUse: 'legacy' }\nreturn 1",
+  );
+  assert.equal(parsed.meta.name, "demo");
 });
 
 test("parseWorkflowScript rejects nondeterministic APIs", () => {

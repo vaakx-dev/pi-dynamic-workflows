@@ -27,7 +27,6 @@ export interface WorkflowMetaPhase {
 export interface WorkflowMeta {
   name: string;
   description: string;
-  whenToUse?: string;
   phases?: WorkflowMetaPhase[];
   /** Default model for agents whose phase has no route and that set no model/tier. */
   model?: string;
@@ -878,8 +877,7 @@ function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
   if (typeof value.name !== "string" || !value.name.trim()) throw new Error("meta.name must be a non-empty string");
   if (typeof value.description !== "string" || !value.description.trim())
     throw new Error("meta.description must be a non-empty string");
-  if (value.whenToUse !== undefined && typeof value.whenToUse !== "string")
-    throw new Error("meta.whenToUse must be a string");
+  if (value.model !== undefined && typeof value.model !== "string") throw new Error("meta.model must be a string");
   if (value.phases !== undefined) {
     if (!Array.isArray(value.phases)) throw new Error("meta.phases must be an array");
     for (const phase of value.phases) {

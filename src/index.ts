@@ -4,8 +4,6 @@ export type { AgentRunOptions, AgentRunResult, WorkflowAgentOptions } from "./ag
 export { listAvailableModelSpecs, WorkflowAgent } from "./agent.js";
 export type { AgentDefinition, AgentRegistry } from "./agent-registry.js";
 export { applyToolPolicy, listAgentTypes, loadAgentRegistry, resolveAgentType } from "./agent-registry.js";
-export type { AutoWorkflowConfig } from "./auto-workflow.js";
-export { shouldUseWorkflow, suggestWorkflowScript } from "./auto-workflow.js";
 export { registerBuiltinWorkflows } from "./builtin-commands.js";
 export * from "./config.js";
 export type { DeepResearchConfig } from "./deep-research.js";
