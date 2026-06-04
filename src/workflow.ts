@@ -282,6 +282,14 @@ export async function runWorkflow<T = unknown>(
     const callIndex = state.callSeq++;
     const callHash = hashAgentCall(prompt, modelSpec, assignedPhase, agentOptions, agentDefinitionKey(agentDef));
 
+    // Reserve the agent slot synchronously — atomic with the limit/budget gate
+    // above (no await in between) — so a parallel() fan-out can't all observe the
+    // same agentCount and overshoot maxAgents. (Token budget stays a soft gate:
+    // spent accrues after each agent, matching Claude Code; in-flight agents may
+    // push slightly past total, then further agent() calls throw.)
+    shared.agentCount++;
+    const label = requestedLabel || defaultAgentLabel(assignedPhase, shared.agentCount);
+
     // Longest-unchanged-prefix resume: replay a cached result only while the
     // prefix is still intact — this call's index is before the first changed/new
     // call. Once any call misses, it AND everything after it run live (matching
@@ -290,8 +298,6 @@ export async function runWorkflow<T = unknown>(
     const cached = options.resumeJournal?.get(callIndex);
     const hashMatches = cached != null && cached.hash === callHash;
     if (hashMatches && callIndex < state.firstMiss) {
-      shared.agentCount++;
-      const label = requestedLabel || defaultAgentLabel(assignedPhase, shared.agentCount);
       options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
       options.onAgentEnd?.({ label, phase: assignedPhase, result: cached.result, tokens: 0, model: displayModel });
       return cached.result;
@@ -301,8 +307,6 @@ export async function runWorkflow<T = unknown>(
     if (!hashMatches) state.firstMiss = Math.min(state.firstMiss, callIndex);
 
     return limiter(async () => {
-      shared.agentCount++;
-      const label = requestedLabel || defaultAgentLabel(assignedPhase, shared.agentCount);
       const timeout = agentOptions.timeoutMs ?? agentTimeoutMs;
 
       options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
@@ -395,6 +399,10 @@ export async function runWorkflow<T = unknown>(
         } catch (error) {
           if (options.signal?.aborted) throw error;
           const workflowError = wrapError(error);
+          // Non-recoverable failures (token budget / agent limit exhausted) must
+          // halt the whole run, exactly like a directly-awaited agent() — not be
+          // swallowed into a null in the result array.
+          if (!workflowError.recoverable) throw workflowError;
           log(`parallel[${index}] failed: ${workflowError.message}`);
           return null;
         }
@@ -422,6 +430,8 @@ export async function runWorkflow<T = unknown>(
           } catch (error) {
             if (options.signal?.aborted) throw error;
             const workflowError = wrapError(error);
+            // Non-recoverable failures halt the whole run (see parallel()).
+            if (!workflowError.recoverable) throw workflowError;
             log(`pipeline[${index}] failed: ${workflowError.message}`);
             return null;
           }

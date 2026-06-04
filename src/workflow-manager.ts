@@ -49,6 +49,8 @@ export interface ExecOptions {
   externalSignal?: AbortSignal;
   /** Called with the live snapshot on every progress event. */
   onProgress?: (snapshot: WorkflowSnapshot) => void;
+  /** Hard token budget for this run; once spent reaches it, agent() throws. */
+  tokenBudget?: number | null;
 }
 
 export interface WorkflowManagerOptions {
@@ -91,7 +93,11 @@ export class WorkflowManager extends EventEmitter {
    * Start a workflow in the background.
    * Returns immediately with a run ID; the workflow executes asynchronously.
    */
-  startInBackground(script: string, args?: unknown): { runId: string; promise: Promise<WorkflowRunResult> } {
+  startInBackground(
+    script: string,
+    args?: unknown,
+    exec: ExecOptions = {},
+  ): { runId: string; promise: Promise<WorkflowRunResult> } {
     const runId = generateRunId();
     const controller = new AbortController();
     const parsed = parseWorkflowScript(script);
@@ -139,7 +145,7 @@ export class WorkflowManager extends EventEmitter {
     // when a workflow is aborted/paused/stopped — executeRun()'s catch block
     // already records status/event/persist, but the promise still rejects.
     // The original promise is returned so callers can await it in try/catch.
-    const promise = this.executeRun(managed, script, args);
+    const promise = this.executeRun(managed, script, args, exec);
     promise.catch(() => {});
 
     return { runId, promise };
@@ -192,7 +198,7 @@ export class WorkflowManager extends EventEmitter {
     args?: unknown,
     exec: ExecOptions = {},
   ): Promise<WorkflowRunResult> {
-    const { resumeJournal, maxAgents, agentTimeoutMs, externalSignal, onProgress } = exec;
+    const { resumeJournal, maxAgents, agentTimeoutMs, externalSignal, onProgress, tokenBudget } = exec;
     const progress = () => onProgress?.(managed.snapshot);
     // Let a host abort (e.g. Esc during a blocking tool call) cancel this run.
     if (externalSignal) {
@@ -209,6 +215,7 @@ export class WorkflowManager extends EventEmitter {
         concurrency: this.concurrency,
         maxAgents,
         agentTimeoutMs,
+        tokenBudget,
         loadSavedWorkflow: this.loadSavedWorkflow,
         resumeJournal,
         resumeFromRunId: resumeJournal ? managed.runId : undefined,

@@ -350,6 +350,58 @@ return { a, second }`;
   assert.equal(result.result.second, "blocked");
 });
 
+test("token budget exhaustion inside parallel() halts (non-recoverable, not swallowed)", async () => {
+  // A warm-up agent spends the whole budget (soft gate: spent accrues after it
+  // finishes); the agent() inside parallel() then hits the gate and must
+  // propagate the non-recoverable error, not become a null in the result array.
+  const script = `export const meta = { name: 'pb', description: 'budget in parallel' }
+await agent('warmup', { label: 'w' })
+const xs = await parallel([() => agent('x', { label: '1' })])
+return xs`;
+  await assert.rejects(
+    () =>
+      runWorkflow(script, {
+        agent: fakeAgent({ input: 100, output: 0, total: 100, cost: 0 }),
+        tokenBudget: 100,
+        persistLogs: false,
+      }),
+    /budget/i,
+    "exhausted budget must reject the run, not become a null in the result array",
+  );
+});
+
+test("non-recoverable agent-limit propagates out of pipeline() too", async () => {
+  const script = `export const meta = { name: 'mp', description: 'agent limit pipeline' }
+const xs = await pipeline([0, 1, 2, 3], (n) => agent('x' + n, { label: 'p' + n }))
+return xs`;
+  await assert.rejects(
+    () =>
+      runWorkflow(script, {
+        agent: fakeAgent({ input: 1, output: 0, total: 1, cost: 0 }),
+        maxAgents: 2,
+        persistLogs: false,
+      }),
+    /limit/i,
+  );
+});
+
+test("maxAgents is enforced under a parallel() fan-out (atomic slot reservation)", async () => {
+  // Four agents fan out with maxAgents=2. With the synchronous slot reservation,
+  // the 3rd agent() throws AGENT_LIMIT instead of all four passing the gate.
+  const script = `export const meta = { name: 'ma', description: 'agent limit' }
+const xs = await parallel([0, 1, 2, 3].map((i) => () => agent('x' + i, { label: 'a' + i })))
+return xs`;
+  await assert.rejects(
+    () =>
+      runWorkflow(script, {
+        agent: fakeAgent({ input: 1, output: 0, total: 1, cost: 0 }),
+        maxAgents: 2,
+        persistLogs: false,
+      }),
+    /limit/i,
+  );
+});
+
 // ─── Additional edge case tests ─────────────────────────────────────────────────
 
 test("runWorkflow returns meta, logs, phases, and duration", async () => {

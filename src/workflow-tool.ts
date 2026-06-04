@@ -85,6 +85,12 @@ const workflowToolSchema = Type.Object({
       description: "Timeout per agent in milliseconds. Default: 300000 (5 minutes).",
     }),
   ),
+  tokenBudget: Type.Optional(
+    Type.Number({
+      description:
+        "Hard total-token budget for the whole run. Once spent reaches it, further agent() calls fail and the run stops. Omit for no limit. Set it when the user asks to cap spend.",
+    }),
+  ),
 });
 
 export type WorkflowToolInput = {
@@ -93,6 +99,7 @@ export type WorkflowToolInput = {
   background?: boolean;
   maxAgents?: number;
   agentTimeoutMs?: number;
+  tokenBudget?: number;
 };
 
 export interface WorkflowToolOptions {
@@ -156,7 +163,11 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       // conversation when the run finishes (see installResultDelivery). Only an
       // explicit `background: false` blocks for the result inline.
       if (params.background ?? true) {
-        const { runId } = manager.startInBackground(script, params.args);
+        const { runId } = manager.startInBackground(script, params.args, {
+          maxAgents: params.maxAgents,
+          agentTimeoutMs: params.agentTimeoutMs,
+          tokenBudget: params.tokenBudget,
+        });
         return {
           content: [{ type: "text", text: backgroundStartedText(parsed.meta.name, runId) }],
           details: { runId, background: true },
@@ -180,6 +191,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
         result = await manager.runSync(script, params.args, {
           maxAgents: params.maxAgents,
           agentTimeoutMs: params.agentTimeoutMs,
+          tokenBudget: params.tokenBudget,
           externalSignal: signal,
           onProgress(live) {
             snapshot = recomputeWorkflowSnapshot(live);
