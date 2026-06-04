@@ -82,6 +82,25 @@ export class WorkflowManager extends EventEmitter {
     this.agent = options.agent;
     this.mainModel = options.mainModel;
     this.persistence = createRunPersistence(this.cwd);
+    this.recoverStaleRuns();
+  }
+
+  /**
+   * On startup, any persisted run still marked "running" belongs to a process
+   * that died mid-run (this fresh manager has it nowhere in memory). Reconcile it
+   * to "paused" — never "failed" — so its journal is preserved and resume() can
+   * replay the completed prefix and finish the rest.
+   */
+  private recoverStaleRuns(): void {
+    try {
+      for (const p of this.persistence.list()) {
+        if (p.status === "running" && !this.runs.has(p.runId)) {
+          this.persistence.save({ ...p, status: "paused" });
+        }
+      }
+    } catch {
+      // Recovery is best-effort; never let it block manager construction.
+    }
   }
 
   /** Set the session's main model (provider/id). Used to auto-tier explore agents. */

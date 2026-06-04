@@ -2,7 +2,7 @@
  * Workflow run state persistence for pause/resume support.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WORKFLOW_RUNS_DIR } from "./config.js";
 
@@ -68,6 +68,7 @@ export type FsLayer = {
   mkdirSync: typeof mkdirSync;
   readdirSync: typeof readdirSync;
   readFileSync: typeof readFileSync;
+  renameSync: typeof renameSync;
   unlinkSync: typeof unlinkSync;
   writeFileSync: typeof writeFileSync;
 };
@@ -77,6 +78,7 @@ export function createRunPersistence(cwd: string, fsOverride?: Partial<FsLayer>)
   const _mkdirSync = fsOverride?.mkdirSync ?? mkdirSync;
   const _readdirSync = fsOverride?.readdirSync ?? readdirSync;
   const _readFileSync = fsOverride?.readFileSync ?? readFileSync;
+  const _renameSync = fsOverride?.renameSync ?? renameSync;
   const _unlinkSync = fsOverride?.unlinkSync ?? unlinkSync;
   const _writeFileSync = fsOverride?.writeFileSync ?? writeFileSync;
 
@@ -94,17 +96,32 @@ export function createRunPersistence(cwd: string, fsOverride?: Partial<FsLayer>)
     save(state: PersistedRunState) {
       ensureDir();
       state.updatedAt = new Date().toISOString();
-      _writeFileSync(runPath(state.runId), JSON.stringify(state, null, 2));
+      const path = runPath(state.runId);
+      const json = JSON.stringify(state, null, 2);
+      // Atomic write: a crash mid-write can't corrupt the live file (tmp+rename is
+      // atomic on the same filesystem). A .bak from the previous good save is the
+      // recovery fallback if the primary is somehow truncated.
+      _writeFileSync(`${path}.tmp`, json);
+      _renameSync(`${path}.tmp`, path);
+      try {
+        _writeFileSync(`${path}.bak`, json);
+      } catch {
+        // backup is best-effort; the primary write already succeeded
+      }
     },
 
     load(runId: string): PersistedRunState | null {
-      try {
-        const path = runPath(runId);
-        if (!_existsSync(path)) return null;
-        return JSON.parse(_readFileSync(path, "utf-8")) as PersistedRunState;
-      } catch {
-        return null;
+      const path = runPath(runId);
+      // Try the primary, then the .bak — so a corrupt primary doesn't lose the run.
+      for (const candidate of [path, `${path}.bak`]) {
+        try {
+          if (!_existsSync(candidate)) continue;
+          return JSON.parse(_readFileSync(candidate, "utf-8")) as PersistedRunState;
+        } catch {
+          // primary corrupt -> fall through to .bak
+        }
       }
+      return null;
     },
 
     list(): PersistedRunState[] {
@@ -129,6 +146,14 @@ export function createRunPersistence(cwd: string, fsOverride?: Partial<FsLayer>)
     delete(runId: string): boolean {
       try {
         const path = runPath(runId);
+        // Best-effort cleanup of the sidecar files alongside the primary.
+        for (const sidecar of [`${path}.bak`, `${path}.tmp`]) {
+          try {
+            if (_existsSync(sidecar)) _unlinkSync(sidecar);
+          } catch {
+            // ignore sidecar cleanup failures
+          }
+        }
         if (_existsSync(path)) {
           _unlinkSync(path);
           return true;
