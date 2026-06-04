@@ -2,6 +2,7 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { listAvailableModelSpecs } from "./agent.js";
+import { listAgentTypes, loadAgentRegistry } from "./agent-registry.js";
 import {
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
@@ -36,6 +37,23 @@ export function modelRoutingGuideline(): string {
     "If the user named a specific model, use opts.model with that exact provider/id; opts.model always takes precedence over opts.tier.",
     list,
   ].join(" ");
+}
+
+/**
+ * Tells the LLM which named subagent definitions (agentType) are available, so
+ * it can route an agent() to a reusable role that binds tools+model+prompt.
+ * Returns undefined when no definitions are registered (nothing to advertise).
+ */
+export function agentTypeGuideline(cwd: string = process.cwd()): string | undefined {
+  let types: Array<{ name: string; description?: string }>;
+  try {
+    types = listAgentTypes(loadAgentRegistry(cwd));
+  } catch {
+    return undefined;
+  }
+  if (!types.length) return undefined;
+  const list = types.map((t) => (t.description ? `${t.name} (${t.description})` : t.name)).join(", ");
+  return `For workflow, opts.agentType routes an agent to a named definition that binds its tools, model, and role prompt. Available agentTypes: ${list}. An explicit opts.model still overrides the definition's model.`;
 }
 
 const workflowToolSchema = Type.Object({
@@ -118,10 +136,11 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       "For workflow, include a final synthesis/assertion agent when combining multiple subagent results; return a compact JSON-serializable value with ok/verdict plus the important outputs.",
       "For workflow, if agent() needs machine-readable output, pass a plain JSON Schema via opts.schema; agent() will return the validated object. Use JSON Schema syntax, not TypeScript or TypeBox constructors.",
       modelRoutingGuideline(),
+      agentTypeGuideline(),
       "For workflow, do not assume the parent assistant has repository code context inside subagents; include enough task context and relevant paths in each agent prompt.",
       "For workflow, runs are background by default: the tool returns immediately with a run ID, the turn ends so the user isn't blocked, and the result is delivered back into the conversation when the run finishes. Pass background: false only when you must use the result inline in this same turn (it will block).",
       "For workflow, you may call `await workflow('saved-name', argsObject)` to run a saved workflow inline and use its result; nesting is one level deep only, and the global 16-concurrent / 1000-total caps hold across the nesting.",
-    ],
+    ].filter((g): g is string => typeof g === "string" && g.length > 0),
     parameters: workflowToolSchema,
     prepareArguments(args) {
       return normalizeWorkflowToolArgs(args);

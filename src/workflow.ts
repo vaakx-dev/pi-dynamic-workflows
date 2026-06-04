@@ -5,6 +5,13 @@ import { parse } from "acorn";
 import type { TSchema } from "typebox";
 import type { AgentUsage } from "./agent.js";
 import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
+import {
+  type AgentDefinition,
+  type AgentRegistry,
+  agentDefinitionKey,
+  loadAgentRegistry,
+  resolveAgentType,
+} from "./agent-registry.js";
 import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENTS_PER_RUN, MAX_CONCURRENCY } from "./config.js";
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
@@ -50,6 +57,12 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   agent?: Pick<WorkflowAgent, "run">;
   /** The session's main model (provider/id), shown in /workflows for default agents. */
   mainModel?: string;
+  /**
+   * Named subagent definitions for `agent({ agentType })`. Snapshotted once per
+   * run for determinism. Defaults to scanning `.pi/agents` (project) + `~/.pi/agents`.
+   * Injectable for tests.
+   */
+  agentRegistry?: AgentRegistry;
   concurrency?: number;
   tokenBudget?: number | null;
   signal?: AbortSignal;
@@ -120,6 +133,13 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
    */
   tier?: string;
   isolation?: "worktree";
+  /**
+   * Name of a registered subagent definition (`.pi/agents/<name>.md`, project >
+   * user). Binds that definition's tool allow/denylist, model, and body prompt
+   * to this agent. An explicit `model` overrides the definition's model; the
+   * definition's model overrides `tier`/phase. An unknown name logs a warning
+   * and falls back to default tools/model (with the name as a prose hint).
+   */
   agentType?: string;
   /** Override timeout for this specific agent. */
   timeoutMs?: number;
@@ -149,6 +169,9 @@ export async function runWorkflow<T = unknown>(
   const agentTimeoutMs = options.agentTimeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
   const runId = options.runId ?? `run-${started.toString(36)}`;
   const baseCwd = options.cwd ?? process.cwd();
+  // Snapshot the agentType registry ONCE per run so two agent() calls can't
+  // observe a mid-run edit (determinism); a later resume re-reads it.
+  const agentRegistry = options.agentRegistry ?? loadAgentRegistry(baseCwd);
 
   // Initialize logger
   const logger = createWorkflowLogger({
@@ -223,12 +246,20 @@ export async function runWorkflow<T = unknown>(
 
     const assignedPhase = agentOptions.phase ?? state.currentPhase;
     const requestedLabel = agentOptions.label?.trim();
-    // Model precedence: explicit agentOptions.model > tier > phase model.
-    // When a tier is requested (and no explicit model), pass undefined here so
-    // the tier — not the phase model — decides inside WorkflowAgent.run(), which
-    // resolves the tier against the user's config (falling back to mainModel).
+
+    // Resolve a named agentType to its bound definition (tools/model/prompt).
+    const agentDef = resolveAgentType(agentOptions.agentType, agentRegistry);
+    if (agentOptions.agentType && !agentDef) {
+      log(`unknown agentType "${agentOptions.agentType}"; using default tools/model`);
+    }
+
+    // Model precedence: explicit agentOptions.model > agentType.model > tier > phase model.
+    // The "explicit-level" model is opts.model, else the definition's model — either
+    // beats tier/phase. When only a tier is set, pass undefined here so the tier (not
+    // the phase model) decides inside WorkflowAgent.run().
+    const explicitModel = agentOptions.model ?? agentDef?.model;
     const modelSpec =
-      agentOptions.model ?? (agentOptions.tier ? undefined : resolveModelForPhase(assignedPhase, routingConfig));
+      explicitModel ?? (agentOptions.tier ? undefined : resolveModelForPhase(assignedPhase, routingConfig));
     // For display in /workflows: the model this agent runs on — its explicit/phase
     // spec, else the session's main model. The real resolved id overrides this via
     // onModelResolved once the subagent session is created.
@@ -237,7 +268,7 @@ export async function runWorkflow<T = unknown>(
     // Deterministic resume key: assigned at lexical call time, before the limiter,
     // so parallel()/pipeline() fan-out is reproducible for a fixed script.
     const callIndex = state.callSeq++;
-    const callHash = hashAgentCall(prompt, modelSpec, assignedPhase, agentOptions);
+    const callHash = hashAgentCall(prompt, modelSpec, assignedPhase, agentOptions, agentDefinitionKey(agentDef));
 
     // Resume: replay a cached result for an unchanged call (matching hash), without
     // consuming a concurrency slot, tokens, or a real subagent run.
@@ -289,9 +320,11 @@ export async function runWorkflow<T = unknown>(
             label,
             schema: agentOptions.schema,
             signal: options.signal,
-            instructions: buildAgentInstructions(assignedPhase, agentOptions),
+            instructions: buildAgentInstructions(assignedPhase, agentOptions, agentDef),
             model: modelSpec,
             tier: agentOptions.tier,
+            toolNames: agentDef?.tools,
+            disallowedToolNames: agentDef?.disallowedTools,
             cwd: runCwd,
             onModelResolved: (id: string) => {
               displayModel = id;
@@ -614,6 +647,7 @@ function hashAgentCall(
   model: string | undefined,
   phase: string | undefined,
   options: AgentOptions,
+  agentDefKey: string | null,
 ): string {
   const identity = JSON.stringify({
     prompt,
@@ -621,18 +655,28 @@ function hashAgentCall(
     tier: options.tier ?? null,
     phase: phase ?? null,
     agentType: options.agentType ?? null,
+    // Resolved definition (tools/model/prompt) so editing an agent .md invalidates
+    // this call's cached result on a later resume.
+    agentDef: agentDefKey,
     schema: options.schema ?? null,
   });
   return createHash("sha256").update(identity).digest("hex");
 }
 
-function buildAgentInstructions(phase: string | undefined, options: AgentOptions): string | undefined {
-  const lines = [];
+function buildAgentInstructions(
+  phase: string | undefined,
+  options: AgentOptions,
+  def: AgentDefinition | undefined,
+): string | undefined {
+  const lines: string[] = [];
+  // A resolved agentType binds a real role prompt (the definition body). Only
+  // fall back to the prose hint when the agentType named no known definition.
+  if (def?.prompt) lines.push(def.prompt);
+  else if (options.agentType) lines.push(`Act as workflow subagent type: ${options.agentType}`);
   if (phase) lines.push(`Workflow phase: ${phase}`);
-  if (options.agentType) lines.push(`Act as workflow subagent type: ${options.agentType}`);
   if (options.isolation) lines.push(`Requested isolation: ${options.isolation}`);
   // Note: options.model is applied for real via the session, not injected as prose.
-  return lines.length ? lines.join("\n") : undefined;
+  return lines.length ? lines.join("\n\n") : undefined;
 }
 
 function estimateTokens(value: unknown): number {

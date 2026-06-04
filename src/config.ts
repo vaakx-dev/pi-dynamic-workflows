@@ -25,3 +25,10 @@ export const USER_WORKFLOW_SAVED_DIR = "~/.pi/workflows/saved";
 
 /** User-level model tiers config file, relative to the home directory. */
 export const MODEL_TIERS_FILE = ".pi/workflows/model-tiers.json";
+
+/**
+ * Named workflow subagent definitions directory. Resolved both project-relative
+ * (cwd/.pi/agents) and home-relative (~/.pi/agents); project entries win on name
+ * collision. Each `*.md` file is an agent definition (frontmatter + body prompt).
+ */
+export const AGENTS_DIR = ".pi/agents";

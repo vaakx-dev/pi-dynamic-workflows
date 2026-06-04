@@ -12,6 +12,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
+import { applyToolPolicy } from "./agent-registry.js";
 import { loadModelTierConfig, type ModelTierConfig, resolveTierModel } from "./model-tier-config.js";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
 
@@ -112,6 +113,15 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   onModelResolved?: (modelId: string) => void;
   /** Run this agent in a different working directory (e.g. an isolated worktree). */
   cwd?: string;
+  /**
+   * Restrict the subagent's coding tools to these names (an agentType
+   * definition's `tools` allowlist). Undefined = all coding tools. The
+   * structured_output tool is always added after this filter, so a schema
+   * still works under a restrictive allowlist.
+   */
+  toolNames?: string[];
+  /** Remove these coding-tool names after the allowlist (an agentType `disallowedTools` denylist). */
+  disallowedToolNames?: string[];
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -169,7 +179,13 @@ export class WorkflowAgent {
     // since tools capture their cwd at construction and can't be relocated.
     const runCwd = options.cwd ?? this.cwd;
     const baseTools = runCwd === this.cwd ? this.baseTools : createCodingTools(runCwd);
-    const customTools: ToolDefinition[] = [...baseTools, ...(options.tools ?? [])];
+    // Apply the agentType tool policy BEFORE adding structured_output, so a
+    // restrictive allowlist never strips the schema tool.
+    const customTools: ToolDefinition[] = applyToolPolicy(
+      [...baseTools, ...(options.tools ?? [])],
+      options.toolNames,
+      options.disallowedToolNames,
+    );
 
     if (options.schema) {
       customTools.push(createStructuredOutputTool({ schema: options.schema, capture }) as unknown as ToolDefinition);

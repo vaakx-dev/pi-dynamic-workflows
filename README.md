@@ -155,10 +155,27 @@ return { inventory, summary }
 | `schema` | object | JSON Schema → the subagent returns a validated object |
 | `model` | string | Run this agent on a specific model — `provider/modelId` or a bare `modelId` |
 | `tier` | `"small"` \| `"medium"` \| `"big"` | Coarse model routing — resolves to whatever model you mapped that tier to (see `/workflows-models`) |
+| `agentType` | string | Route to a named subagent definition (`.pi/agents/<name>.md`) that binds tools + model + role prompt |
 | `isolation` | `"worktree"` | Run this agent in its own throwaway git worktree (parallel edits without conflict) |
 | `timeoutMs` | number | Override the default 5-minute agent timeout |
 
-Models can also be set per phase via `meta.phases[].model`. Precedence: `opts.model` > `opts.tier` > phase model > session default; an unknown model logs a warning and falls back. An explicit `model` always wins over a `tier`. The model each agent ran on is recorded and shown in the `/workflows` navigator.
+Models can also be set per phase via `meta.phases[].model`. Precedence: `opts.model` > `agentType` model > `opts.tier` > phase model > session default; an unknown model logs a warning and falls back. An explicit `model` always wins. The model each agent ran on is recorded and shown in the `/workflows` navigator.
+
+**Subagent definitions (`agentType`)** make roles reusable. Drop a Markdown file at `.pi/agents/<name>.md` (project, takes precedence) or `~/.pi/agents/<name>.md` (user):
+
+```markdown
+---
+name: security-auditor
+description: Reviews code for vulnerabilities
+model: openai/gpt-4.1-mini
+tools: [read, grep]            # allowlist of coding tools (omit = all)
+disallowedTools: [write, bash] # removed after the allowlist
+---
+You are a security auditor. Read the code, find injection/authz/secrets issues,
+and report concrete file:line findings. Do not modify files.
+```
+
+Then any workflow can use it: `agent('audit src/', { agentType: 'security-auditor' })` — the subagent runs on the named model, with only the allowed tools, guided by the body prompt. Editing the `.md` invalidates that call's resume cache. Bound today: `tools`, `disallowedTools`, `model`, body prompt (`mcp`/`skills`/`background`/`isolation` are parsed but not yet wired).
 
 **Tiers** let a script ask for coarse routing (`{ tier: 'small' }`) without naming a concrete model. Each tier maps to a single model in `~/.pi/workflows/model-tiers.json`; run **`/workflows-models`** to pick the model for each tier (small / medium / big). Until you configure them, every tier resolves to your current session model, so tiered scripts work with zero setup.
 
