@@ -41,6 +41,9 @@ export interface PersistedRunState {
     input: number;
     output: number;
     total: number;
+    cost?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
   };
   /** Cached agent results for resume, keyed by deterministic call index. */
   journal?: Array<{ index: number; hash: string; result: unknown }>;

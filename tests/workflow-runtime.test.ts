@@ -40,9 +40,9 @@ const a = await agent('first', { label: 'a' })
 const b = await agent('second', { label: 'b' })
 return { a, b }`;
 
-test("runWorkflow accumulates real per-agent usage", async () => {
+test("runWorkflow accumulates real per-agent usage (incl. cost + cache tokens)", async () => {
   const result = await runWorkflow(twoAgentScript, {
-    agent: fakeAgent({ input: 100, output: 40, total: 140, cost: 0.002 }),
+    agent: fakeAgent({ input: 100, output: 40, total: 140, cost: 0.002, cacheRead: 50, cacheWrite: 10 }),
     persistLogs: false,
   });
 
@@ -51,6 +51,8 @@ test("runWorkflow accumulates real per-agent usage", async () => {
   assert.equal(result.tokenUsage?.output, 80);
   assert.equal(result.tokenUsage?.total, 280);
   assert.ok(Math.abs((result.tokenUsage?.cost ?? 0) - 0.004) < 1e-9, "should be within tolerance");
+  assert.equal(result.tokenUsage?.cacheRead, 100, "cacheRead accumulates across agents");
+  assert.equal(result.tokenUsage?.cacheWrite, 20, "cacheWrite accumulates across agents");
 });
 
 test("runWorkflow falls back to an estimate when provider reports total === 0", async () => {

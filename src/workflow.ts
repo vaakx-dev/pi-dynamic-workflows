@@ -48,7 +48,7 @@ export interface SharedRuntime {
   limiter: <T>(fn: () => Promise<T>) => Promise<T>;
   agentCount: number;
   spent: number;
-  tokenUsage: { input: number; output: number; total: number; cost: number };
+  tokenUsage: { input: number; output: number; total: number; cost: number; cacheRead: number; cacheWrite: number };
   depth: number;
 }
 
@@ -95,7 +95,14 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     worktree?: string;
     model?: string;
   }) => void;
-  onTokenUsage?: (usage: { input: number; output: number; total: number; cost: number }) => void;
+  onTokenUsage?: (usage: {
+    input: number;
+    output: number;
+    total: number;
+    cost: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -111,6 +118,8 @@ export interface WorkflowRunResult<T = unknown> {
     output: number;
     total: number;
     cost: number;
+    cacheRead?: number;
+    cacheWrite?: number;
   };
 }
 
@@ -242,7 +251,7 @@ export async function runWorkflow<T = unknown>(
     limiter: createLimiter(concurrency),
     agentCount: 0,
     spent: 0,
-    tokenUsage: { input: 0, output: 0, total: 0, cost: 0 },
+    tokenUsage: { input: 0, output: 0, total: 0, cost: 0, cacheRead: 0, cacheWrite: 0 },
     depth: 0,
   };
   const limiter = shared.limiter;
@@ -361,6 +370,8 @@ export async function runWorkflow<T = unknown>(
           shared.tokenUsage.input += usage.input;
           shared.tokenUsage.output += usage.output;
           shared.tokenUsage.cost += usage.cost;
+          shared.tokenUsage.cacheRead += usage.cacheRead;
+          shared.tokenUsage.cacheWrite += usage.cacheWrite;
         }
         shared.tokenUsage.total += tokens;
         shared.spent += tokens;

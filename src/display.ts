@@ -35,6 +35,8 @@ export interface WorkflowSnapshot {
     output: number;
     total: number;
     cost?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
   };
   runId?: string;
 }

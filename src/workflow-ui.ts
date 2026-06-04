@@ -54,6 +54,7 @@ interface RunRow {
   done: number;
   total: number;
   tokens: number;
+  cost: number;
 }
 interface PhaseRow {
   title: string;
@@ -103,6 +104,7 @@ export class NavigatorModel {
         done: agents.filter((a) => a.status === "done").length,
         total: agents.length,
         tokens: (live?.snapshot.tokenUsage ?? p.tokenUsage)?.total ?? 0,
+        cost: (live?.snapshot.tokenUsage ?? p.tokenUsage)?.cost ?? 0,
       };
     });
   }
@@ -360,7 +362,9 @@ export function renderNavigator(
     // Render runs
     runs.forEach((r, i) => {
       const icon = STATUS_ICON[r.status] ?? "?";
-      const meta = [`${r.done}/${r.total}`, fmtTokens(r.tokens)].filter(Boolean).join(" · ");
+      const meta = [`${r.done}/${r.total}`, fmtTokens(r.tokens), r.cost > 0 ? `$${r.cost.toFixed(4)}` : ""]
+        .filter(Boolean)
+        .join(" · ");
       lines.push(sel(i, `${icon} ${r.name}  ${dim(`${r.runId} · ${r.status} · ${meta}`)}`));
     });
     // Render saved workflows after a separator

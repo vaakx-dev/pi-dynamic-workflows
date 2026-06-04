@@ -502,6 +502,26 @@ test(
 );
 
 test(
+  "persistence round-trips cost and cache fields in tokenUsage",
+  withTempCwd(async (cwd) => {
+    const rp = createRunPersistence(cwd);
+    rp.save({
+      runId: "tu",
+      workflowName: "w",
+      status: "completed",
+      phases: [],
+      agents: [],
+      logs: [],
+      tokenUsage: { input: 1, output: 2, total: 3, cost: 0.5, cacheRead: 9, cacheWrite: 4 },
+    } as PersistedRunState);
+    const loaded = rp.load("tu");
+    assert.equal(loaded?.tokenUsage?.cost, 0.5, "cost survives reload");
+    assert.equal(loaded?.tokenUsage?.cacheRead, 9, "cacheRead survives reload");
+    assert.equal(loaded?.tokenUsage?.cacheWrite, 4, "cacheWrite survives reload");
+  }),
+);
+
+test(
   "WorkflowManager reconciles a stale 'running' run to 'paused' on construction",
   withTempCwd(async (cwd) => {
     const rp = createRunPersistence(cwd);
