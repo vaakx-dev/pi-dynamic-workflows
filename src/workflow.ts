@@ -398,6 +398,10 @@ export async function runWorkflow<T = unknown>(
             onModelResolved: (id: string) => {
               displayModel = id;
             },
+            onModelFallback: (spec: string) => {
+              // Make the silent degrade visible in /workflows, not just console.
+              log(`${label}: model "${spec}" unavailable — using the session default`);
+            },
             onUsage: (u: AgentUsage) => {
               usage = u;
             },

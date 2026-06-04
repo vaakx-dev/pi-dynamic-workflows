@@ -221,6 +221,8 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   tier?: string;
   /** Called with the resolved model id once known (for display/telemetry). */
   onModelResolved?: (modelId: string) => void;
+  /** Called when `model`/`tier`/phase resolved to a spec that wasn't found (fell back to session default). */
+  onModelFallback?: (requestedSpec: string) => void;
   /** Run this agent in a different working directory (e.g. an isolated worktree). */
   cwd?: string;
   /**
@@ -321,6 +323,7 @@ export class WorkflowAgent {
         options.onModelResolved?.(`${resolvedModel.provider}/${resolvedModel.id}`);
       } else {
         console.warn(`[workflow] model "${modelSpec}" not found; using session default`);
+        options.onModelFallback?.(modelSpec);
       }
     }
 
