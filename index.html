@@ -39,7 +39,7 @@
         "description": "Claude Code–style dynamic workflows for Pi: code-mode subagents with real model routing, journaled resume, git-worktree isolation, cost accounting, subagent diagnostics, ultracode, and deep research.",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "softwareVersion": "2.1.0",
+        "softwareVersion": "2.2.0",
         "url": "https://quintinshaw.github.io/pi-dynamic-workflows/",
         "downloadUrl": "https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows",
         "license": "https://opensource.org/licenses/MIT",
@@ -243,7 +243,7 @@
         <div class="cta">
           <a class="btn primary" href="#quickstart">Get started</a>
           <a class="btn ghost" href="https://github.com/QuintinShaw/pi-dynamic-workflows">Star on GitHub</a>
-          <span class="pill">v2.1.0 · MIT</span>
+          <span class="pill">v2.2.0 · MIT</span>
         </div>
         <p class="also">Also on <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows">npm</a> · <a href="https://pi.dev/packages/@quintinshaw/pi-dynamic-workflows">Pi package</a></p>
       </div>
@@ -311,7 +311,7 @@ return await agent('Synthesize and double-check:\n' + findings.join('\n\n'), { t
           <div class="card"><h3>Git worktree isolation</h3><p><code>isolation: "worktree"</code> gives an agent its own branch, so parallel agents edit the same files without clobbering each other.</p></div>
           <div class="card"><h3>Real cost accounting</h3><p>Token and dollar cost read from each subagent's session, not estimated. <code>budget</code> gates on the real total; <code>/workflows</code> shows the spend.</p></div>
           <div class="card"><h3>Background by default</h3><p>The turn ends immediately; a live task panel tracks each run and the result auto-continues the conversation when it lands.</p></div>
-          <div class="card"><h3>Interactive /workflows TUI</h3><p>Drill runs → phases → agents → detail. Inspect prompts, results, failure codes, and compact message/tool history; pause, stop, restart, and save runs.</p></div>
+          <div class="card"><h3>Interactive /workflows TUI</h3><p>Drill runs → phases → agents → detail in a themed, ANSI-safe navigator. Inspect prompts, results, failure codes, and compact message/tool history; pause, stop, restart, and save runs.</p></div>
           <div class="card"><h3>Subagent diagnostics</h3><p>Recoverable failures return <code>null</code> without hiding the cause. Empty outputs are marked <code>AGENT_EMPTY_OUTPUT</code> and shown with compact history in <code>/workflows</code>.</p></div>
           <div class="card"><h3>Quality-pattern stdlib</h3><p>Built-in <code>verify()</code>, <code>judgePanel()</code>, <code>loopUntilDry()</code>, and <code>completenessCheck()</code> for adversarial review, best-of-N, and exhaustive discovery.</p></div>
           <div class="card"><h3>Ultracode</h3><p><code>/ultracode</code> is a standing opt-in that auto-arms an exhaustive workflow for every substantive message.</p></div>
