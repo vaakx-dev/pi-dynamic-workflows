@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import test from "node:test";
 import { WORKFLOW_SAVED_DIR } from "../src/config.js";
 import { createWorkflowStorage } from "../src/workflow-saved.js";
@@ -59,7 +59,7 @@ test(
       "user",
     );
     assert.equal(saved.location, "user");
-    assert.ok(saved.path.includes(".pi/workflows/saved"), "should contain .pi/workflows/saved");
+    assert.ok(saved.path.includes(`.pi${sep}workflows${sep}saved`), "should contain .pi/workflows/saved");
   }),
 );
 
