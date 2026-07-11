@@ -39,7 +39,7 @@
         "description": "Claude Code–style dynamic workflows for Pi: code-mode subagents with real model routing, journaled resume, git-worktree isolation, cost accounting, subagent diagnostics, ultracode, and deep research.",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "softwareVersion": "2.12.1",
+        "softwareVersion": "2.13.0",
         "url": "https://quintinshaw.github.io/pi-dynamic-workflows/",
         "downloadUrl": "https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows",
         "license": "https://opensource.org/licenses/MIT",
@@ -243,7 +243,7 @@
         <div class="cta">
           <a class="btn primary" href="#quickstart">Get started</a>
           <a class="btn ghost" href="https://github.com/QuintinShaw/pi-dynamic-workflows">Star on GitHub</a>
-          <span class="pill">v2.12.1 · MIT</span>
+          <span class="pill">v2.13.0 · MIT</span>
         </div>
         <p class="also">Also on <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows">npm</a> · <a href="https://pi.dev/packages/@quintinshaw/pi-dynamic-workflows">Pi package</a></p>
       </div>
@@ -352,6 +352,7 @@ return await agent('Synthesize and double-check:\n' + findings.join('\n\n'), { t
           <dt>/adversarial-review &lt;task&gt;</dt><dd>Findings vetted by skeptical reviewers.</dd>
           <dt>/multi-perspective "&lt;topic&gt;" [angle …]</dt><dd>Analyze a topic from several independent angles, then synthesize.</dd>
           <dt>/codebase-audit &lt;scope&gt; "&lt;check&gt;" …</dt><dd>Run parallel checks over a scope, then cross-validate and report.</dd>
+          <dt>/code-review [staged|&lt;range&gt;|&lt;pr&gt;]</dt><dd>Finder → verify → report review over a git diff — working tree, staged, a commit range, or a GitHub PR.</dd>
         </dl>
       </div>
     </section>
