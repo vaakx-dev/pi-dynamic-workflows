@@ -153,7 +153,7 @@ Workflow state is stored under `~/.pi/workflows` so projects do not accumulate e
 }
 ```
 
-Use `/workflows-models` to edit these in the TUI: choose the base model first, then choose `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or the session default.
+Use `/workflows-models` to edit these in the TUI: choose the base model first, then choose `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or the session default.
 
 To avoid accidental keyword triggers, configure a custom trigger word in `~/.pi/workflows/settings.json`:
 

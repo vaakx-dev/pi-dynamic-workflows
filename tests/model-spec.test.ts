@@ -40,6 +40,16 @@ describe("model spec thinking suffixes", () => {
     assert.equal(resolved.resolvedSpec, "openai-codex/gpt-5.5:xhigh");
   });
 
+  it("resolves max as a Pi thinking level instead of a synthetic model id", () => {
+    const gpt56 = model("openai-codex", "gpt-5.6-sol");
+    const resolved = resolveModelSpecWithThinking("openai-codex/gpt-5.6-sol:max", registry([gpt56]));
+
+    assert.equal(resolved.model, gpt56);
+    assert.equal(resolved.thinkingLevel, "max");
+    assert.equal(resolved.resolvedSpec, "openai-codex/gpt-5.6-sol:max");
+    assert.equal(resolved.warning, undefined);
+  });
+
   it("does not strip colon suffixes from exact model ids", () => {
     const exactColonModel = model("openrouter", "some:model");
     const resolved = resolveModelSpecWithThinking("openrouter/some:model", registry([exactColonModel]));

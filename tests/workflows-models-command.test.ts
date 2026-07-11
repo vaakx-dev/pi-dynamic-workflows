@@ -126,6 +126,27 @@ describe("workflows-models-command", () => {
       assert.ok(thinkingOptions.includes("xhigh"), "TUI should offer xhigh thinking");
     });
 
+    it("offers max thinking for the selected model", async () => {
+      const { editSingleTier } = await import("../src/workflows-models-command.js");
+      let thinkingOptions: string[] = [];
+      const ctx = {
+        ui: {
+          custom: mock.fn(async () => "openai-codex/gpt-5.6-sol"),
+          select: mock.fn(async (_title: string, options: string[]) => {
+            thinkingOptions = options;
+            return "max";
+          }),
+          notify: mock.fn(),
+        },
+      };
+      const tiers: Record<string, string> = { big: "openai-codex/gpt-5.6-sol" };
+
+      const result = await editSingleTier(ctx as never, tiers, "big");
+      assert.ok(result, "should return updated tiers");
+      assert.equal(result.big, "openai-codex/gpt-5.6-sol:max");
+      assert.ok(thinkingOptions.includes("max"), "TUI should offer max thinking");
+    });
+
     it("preselects the base model when the current tier has a thinking suffix", async () => {
       const { editSingleTier } = await import("../src/workflows-models-command.js");
       const ctx = {
