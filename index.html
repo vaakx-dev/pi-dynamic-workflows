@@ -3,422 +3,556 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>pi-dynamic-workflows — Claude Code–style subagents for Pi</title>
-  <meta name="description" content="Turn one prompt into a fleet of subagents. Claude Code–style dynamic workflows for Pi: code-mode orchestration, model routing, journaled resume, subagent diagnostics, and history.">
+  <title>pi-dynamic-workflows — Multi-agent orchestration for Pi</title>
+  <meta name="description" content="Turn one prompt into a routed, resumable, cross-checked fleet of Pi subagents. Real model routing, worktree isolation, journaled resume, and measured usage.">
   <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#101725">
   <link rel="canonical" href="https://quintinshaw.github.io/pi-dynamic-workflows/">
-  <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='46' font-size='40' text-anchor='middle' fill='white' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111727'/%3E%3Cpath d='M13 20h15v8H13zm23 0h15v8H36zM24 36h16v8H24z' fill='%2361d2b4'/%3E%3C/svg%3E">
 
-  <!-- Open Graph / Twitter -->
-  <meta property="og:title" content="pi-dynamic-workflows — Claude Code–style dynamic workflows for Pi">
-  <meta property="og:description" content="One prompt fans out into a fleet of subagents that cross-check each other and hand back a synthesized answer. Model routing, resume, worktree isolation, cost accounting, subagent diagnostics, ultracode, deep research.">
+  <meta property="og:title" content="pi-dynamic-workflows — One prompt. A whole team. One checked result.">
+  <meta property="og:description" content="Multi-agent orchestration for Pi with model routing, journaled resume, worktree isolation, and real usage accounting.">
   <meta property="og:url" content="https://quintinshaw.github.io/pi-dynamic-workflows/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="pi-dynamic-workflows">
-  <meta property="og:locale" content="en_US">
-  <meta property="og:image" content="https://quintinshaw.github.io/pi-dynamic-workflows/workflows-mode.jpg">
-  <meta property="og:image:width" content="1888">
-  <meta property="og:image:height" content="1610">
-  <meta property="og:image:type" content="image/jpeg">
-  <meta property="og:image:alt" content="pi-dynamic-workflows fanning a task across subagents in Pi">
+  <meta property="og:image" content="https://quintinshaw.github.io/pi-dynamic-workflows/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="750">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:alt" content="pi-dynamic-workflows routes one prompt through parallel agents and returns a verified result">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="pi-dynamic-workflows — dynamic workflows for Pi">
-  <meta name="twitter:description" content="Claude Code–style dynamic workflows for Pi: code-mode subagents, model routing, resume, worktree isolation, subagent diagnostics, ultracode, deep research.">
-  <meta name="twitter:image" content="https://quintinshaw.github.io/pi-dynamic-workflows/workflows-mode.jpg">
-  <meta name="twitter:image:alt" content="pi-dynamic-workflows fanning a task across subagents in Pi">
+  <meta name="twitter:title" content="pi-dynamic-workflows — Multi-agent orchestration for Pi">
+  <meta name="twitter:description" content="One prompt. Routed agents. One checked result.">
+  <meta name="twitter:image" content="https://quintinshaw.github.io/pi-dynamic-workflows/og.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "SoftwareApplication",
-        "name": "pi-dynamic-workflows",
-        "description": "Claude Code–style dynamic workflows for Pi: code-mode subagents with real model routing, journaled resume, git-worktree isolation, cost accounting, subagent diagnostics, ultracode, and deep research.",
-        "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "macOS, Linux, Windows",
-        "softwareVersion": "2.13.2",
-        "url": "https://quintinshaw.github.io/pi-dynamic-workflows/",
-        "downloadUrl": "https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows",
-        "license": "https://opensource.org/licenses/MIT",
-        "author": { "@type": "Person", "name": "QuintinShaw" },
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
-      },
-      {
-        "@type": "FAQPage",
-        "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "What is pi-dynamic-workflows?",
-            "acceptedAnswer": { "@type": "Answer", "text": "A Pi extension that brings Claude Code–style dynamic workflows to Pi. Instead of one model working step by step, Pi writes a JavaScript orchestration script that fans a task out across many isolated subagents in parallel, holds the intermediate work in script variables, and returns only the synthesized result." }
-          },
-          {
-            "@type": "Question",
-            "name": "Does it work with any model?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Yes. It runs on whatever providers and models Pi is authenticated for, and routes each subagent to a small, medium, or big tier (or an exact model) so cheap work goes to a light model and hard synthesis to a big one." }
-          },
-          {
-            "@type": "Question",
-            "name": "What is ultracode?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Ultracode is a standing opt-in: type /ultracode and every substantive message auto-arms an exhaustive multi-agent workflow, the way Claude Code's ultracode does. /effort high is the lighter tier, and /ultracode off turns it back off." }
-          },
-          {
-            "@type": "Question",
-            "name": "Can an interrupted run resume?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Yes. Runs are journaled. A resumed run replays the completed, unchanged agents from the journal (no re-run, no tokens) and only runs what is left or what you changed. The journal survives restarts." }
-          },
-          {
-            "@type": "Question",
-            "name": "How is it different from running subagents by hand?",
-            "acceptedAnswer": { "@type": "Answer", "text": "The orchestration is code, not chat: fan-out, ordering, and synthesis live in a deterministic script, intermediate results stay out of your context window, and the whole run is journaled so it can resume, show real cost, and be saved as a reusable command." }
-          },
-          {
-            "@type": "Question",
-            "name": "How do I debug failing subagents?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Open /workflows, drill into the run, phase, and agent detail. Recoverable failures include an error code and message, and each agent detail shows compact message and tool history so null or empty outputs are diagnosable." }
-          },
-          {
-            "@type": "Question",
-            "name": "How do I install it?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Run 'pi install npm:@quintinshaw/pi-dynamic-workflows' and then /reload in Pi. You get the workflow tool plus the /workflows, /ultracode, /deep-research, /adversarial-review, /multi-perspective, and /codebase-audit commands." }
-          }
-        ]
-      }
-    ]
+    "@type": "SoftwareApplication",
+    "name": "pi-dynamic-workflows",
+    "description": "Multi-agent orchestration for Pi with model routing, journaled resume, worktree isolation, and real usage accounting.",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS, Linux, Windows",
+    "softwareVersion": "2.13.2",
+    "url": "https://quintinshaw.github.io/pi-dynamic-workflows/",
+    "downloadUrl": "https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows",
+    "license": "https://opensource.org/licenses/MIT",
+    "author": { "@type": "Person", "name": "Quintin Shaw" },
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
   }
   </script>
 
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #f7f4ef;
-      --text: #171512;
-      --muted: #5f5a52;
-      --line: #ddd5c9;
-      --accent: #0f766e;
-      --accent-text: #ffffff;
-      --panel: #fffaf2;
-      --code-bg: #0f1f1f;
-      --code-text: #d7fff7;
-      --chip: #ece5d8;
+      --ink: #101725;
+      --ink-2: #182235;
+      --ink-3: #23304a;
+      --cream: #f6f0e5;
+      --paper: #fbf8f2;
+      --mint: #61d2b4;
+      --mint-deep: #173f37;
+      --violet: #6c5ce7;
+      --violet-soft: #dcd5ff;
+      --coral: #ff725e;
+      --yellow: #ffd166;
+      --white: #ffffff;
+      --muted: #9aa5b9;
+      --muted-dark: #667187;
+      --line: rgba(154, 165, 185, .22);
+      --shadow: 0 26px 70px rgba(4, 9, 18, .22);
+      --radius: 26px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0f1113;
-        --text: #f3eee7;
-        --muted: #b3aca3;
-        --line: #2b2f33;
-        --accent: #2dd4bf;
-        --accent-text: #06231f;
-        --panel: #16191c;
-        --code-bg: #0b1414;
-        --code-text: #d7fff7;
-        --chip: #1d2226;
-      }
-    }
+
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; scroll-padding-top: 84px; }
     body {
       margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.6;
+      color: var(--cream);
+      background: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.55;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .wrap { width: min(960px, calc(100% - 40px)); margin: 0 auto; }
-    code, pre, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    a { color: inherit; }
+    button, input { font: inherit; }
+    code, pre { font-family: var(--mono); }
+    img { max-width: 100%; }
+    ::selection { color: var(--ink); background: var(--mint); }
 
-    header.nav { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(8px);
-      background: color-mix(in srgb, var(--bg) 86%, transparent); border-bottom: 1px solid var(--line); }
-    .nav-inner { display: flex; align-items: center; gap: 18px; height: 56px; }
-    .brand { font-weight: 700; letter-spacing: -0.02em; }
-    .nav-links { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
-    .nav-links a { color: var(--muted); font-size: 0.93rem; }
-    .nav-links a:hover { color: var(--text); text-decoration: none; }
-    @media (max-width: 620px) { .nav-links a.hide-sm { display: none; } }
+    .shell { width: min(1180px, calc(100% - 40px)); margin-inline: auto; }
+    .eyebrow {
+      display: flex; align-items: center; gap: 12px; margin: 0 0 18px;
+      color: var(--muted); font-size: .78rem; font-weight: 800; letter-spacing: .19em; text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 34px; height: 5px; border-radius: 9px; background: var(--coral); }
+    .section-title { max-width: 790px; margin: 0; font-size: clamp(2.15rem, 4.5vw, 4rem); line-height: 1.02; letter-spacing: -.055em; }
+    .section-copy { max-width: 660px; margin: 20px 0 0; color: var(--muted); font-size: 1.05rem; }
+    .dark-text { color: var(--ink); }
+    .dark-text .eyebrow, .dark-text .section-copy { color: var(--muted-dark); }
 
-    .hero { padding: 76px 0 28px; }
-    .eyebrow { color: var(--accent); font-weight: 650; font-size: 0.86rem; letter-spacing: 0.04em; text-transform: uppercase; }
-    h1 { margin: 12px 0 0; font-size: clamp(2.2rem, 6vw, 4rem); line-height: 1.03; letter-spacing: -0.03em; }
-    .lede { font-size: clamp(1.05rem, 2.4vw, 1.28rem); color: var(--muted); margin: 18px 0 0; max-width: 52ch; }
-    .trust { color: var(--muted); font-size: 0.86rem; margin: 16px 0 0; }
-    .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 24px; }
-    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px;
-      border: 1px solid var(--line); font-weight: 600; font-size: 0.95rem; }
-    .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
-    .btn.primary:hover { text-decoration: none; opacity: 0.92; }
-    .btn.ghost:hover { text-decoration: none; border-color: var(--accent); }
-    .also { color: var(--muted); font-size: 0.9rem; margin: 12px 0 0; }
+    .site-nav {
+      position: fixed; z-index: 30; top: 18px; left: 50%; transform: translateX(-50%);
+      width: min(1120px, calc(100% - 28px)); border: 1px solid rgba(255,255,255,.1);
+      border-radius: 18px; background: rgba(16, 23, 37, .78); backdrop-filter: blur(18px);
+      box-shadow: 0 14px 35px rgba(0,0,0,.18);
+    }
+    .nav-inner { min-height: 58px; padding: 9px 12px 9px 18px; display: flex; align-items: center; gap: 24px; }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 800; letter-spacing: -.02em; }
+    .brand-mark { position: relative; width: 26px; height: 22px; }
+    .brand-mark i { position: absolute; width: 9px; height: 9px; border-radius: 3px; background: var(--mint); }
+    .brand-mark i:nth-child(1) { left: 0; top: 0; }
+    .brand-mark i:nth-child(2) { right: 0; top: 0; background: var(--violet); }
+    .brand-mark i:nth-child(3) { left: 8px; bottom: 0; background: var(--coral); }
+    .nav-links { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    .nav-links a { padding: 8px 11px; border-radius: 9px; color: #c7cedb; font-size: .86rem; text-decoration: none; }
+    .nav-links a:hover { color: var(--white); background: rgba(255,255,255,.07); }
+    .nav-cta { margin-left: 6px; padding: 9px 14px !important; color: var(--ink) !important; background: var(--mint) !important; font-weight: 800; }
 
-    .install { display: flex; align-items: stretch; gap: 0; margin-top: 22px; max-width: 560px;
-      border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--code-bg); }
-    .install code { flex: 1; padding: 13px 16px; color: var(--code-text); font-size: 0.92rem; overflow-x: auto; white-space: nowrap; }
-    .install button { border: 0; border-left: 1px solid rgba(255,255,255,0.12); background: transparent;
-      color: var(--code-text); padding: 0 16px; cursor: pointer; font-size: 0.85rem; }
-    .install button:hover { background: rgba(255,255,255,0.07); }
+    .hero {
+      position: relative; min-height: 820px; padding: 160px 0 92px; overflow: hidden;
+      background-image: linear-gradient(rgba(39,48,69,.48) 1px, transparent 1px), linear-gradient(90deg, rgba(39,48,69,.48) 1px, transparent 1px);
+      background-size: 48px 48px;
+    }
+    .hero::before { content: ""; position: absolute; width: 420px; height: 420px; right: -170px; top: -150px; border-radius: 50%; background: var(--coral); opacity: .1; }
+    .hero::after { content: ""; position: absolute; width: 360px; height: 360px; left: -210px; bottom: -190px; border-radius: 50%; background: var(--mint); opacity: .08; }
+    .hero-grid { position: relative; z-index: 1; display: grid; grid-template-columns: 1.02fr .98fr; align-items: center; gap: clamp(54px, 8vw, 110px); }
+    .hero h1 { margin: 0; max-width: 760px; font-size: clamp(3.45rem, 7vw, 6.7rem); line-height: .91; letter-spacing: -.075em; }
+    .hero h1 span { display: block; color: var(--mint); }
+    .hero-lede { max-width: 620px; margin: 28px 0 0; color: #c5ccda; font-size: clamp(1.05rem, 1.8vw, 1.25rem); }
+    .install-box { display: flex; max-width: 650px; margin-top: 34px; padding: 7px; border: 1px solid rgba(255,255,255,.12); border-radius: 15px; background: rgba(5,9,17,.56); box-shadow: 0 20px 50px rgba(0,0,0,.2); }
+    .install-box code { flex: 1; min-width: 0; padding: 11px 13px; color: #e9edf5; overflow-x: auto; white-space: nowrap; font-size: .88rem; }
+    .copy-btn { border: 0; border-radius: 10px; padding: 0 16px; color: var(--ink); background: var(--mint); cursor: pointer; font-size: .8rem; font-weight: 800; }
+    .copy-btn:hover { background: #83dfc8; }
+    .hero-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border: 1px solid var(--line); border-radius: 11px; text-decoration: none; font-size: .9rem; font-weight: 750; }
+    .button.primary { color: var(--ink); border-color: var(--cream); background: var(--cream); }
+    .button.secondary { color: #dfe4ed; background: rgba(255,255,255,.04); }
+    .button:hover { transform: translateY(-1px); }
 
-    section { padding: 44px 0; border-top: 1px solid var(--line); }
-    h2 { font-size: clamp(1.5rem, 3.4vw, 2.05rem); letter-spacing: -0.02em; margin: 0 0 6px; }
-    section > .wrap > p.sub { color: var(--muted); margin: 0 0 22px; max-width: 64ch; }
+    .agent-stage { position: relative; min-height: 470px; }
+    .agent-card { position: absolute; width: min(350px, 88%); padding: 24px; border-radius: 23px; color: var(--ink); box-shadow: var(--shadow); }
+    .agent-card::after { content: ""; position: absolute; inset: 11px -11px -11px 11px; z-index: -1; border-radius: inherit; background: rgba(0,0,0,.22); }
+    .agent-card small { display: block; margin-bottom: 15px; font: 800 .72rem/1 var(--mono); letter-spacing: .09em; }
+    .agent-card strong { display: block; font-size: 1.45rem; line-height: 1.1; }
+    .agent-card.scan { right: 18px; top: 0; transform: rotate(4deg); background: var(--cream); }
+    .agent-card.review { left: 5px; top: 145px; transform: rotate(-4deg); background: var(--mint); }
+    .agent-card.result { right: -10px; top: 296px; transform: rotate(4deg); color: var(--white); background: var(--violet); }
+    .terminal-line { display: flex; align-items: center; gap: 10px; margin-top: 17px; padding: 13px; border-radius: 10px; color: #aeb8c9; background: var(--ink-2); }
+    .prompt-arrow { color: var(--mint); font-size: 1.35rem; font-weight: 900; }
+    .agent-pills { display: flex; gap: 8px; margin-top: 17px; }
+    .agent-pills i { width: 66px; height: 24px; border-radius: 7px; background: var(--cream); }
+    .agent-pills i:nth-child(2) { background: var(--ink); }
+    .agent-pills i:nth-child(3) { background: var(--violet); }
+    .verify-line { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+    .check { width: 38px; height: 38px; border: 3px solid var(--cream); border-radius: 50%; display: grid; place-items: center; color: var(--mint); font-weight: 900; }
 
-    figure { margin: 0; }
-    .shot { width: 100%; border: 1px solid var(--line); border-radius: 12px; display: block; background: var(--panel); }
-    figcaption { color: var(--muted); font-size: 0.88rem; margin-top: 10px; }
+    .proof-bar { position: relative; z-index: 2; margin-top: -48px; }
+    .proof-grid { display: grid; grid-template-columns: 1.35fr repeat(3, .55fr); border: 1px solid rgba(255,255,255,.1); border-radius: 22px; overflow: hidden; background: var(--ink-2); box-shadow: var(--shadow); }
+    .proof-cell { min-height: 118px; padding: 24px 26px; display: flex; flex-direction: column; justify-content: center; border-left: 1px solid rgba(255,255,255,.08); }
+    .proof-cell:first-child { border-left: 0; }
+    .proof-cell p { margin: 0; color: var(--muted); font-size: .92rem; }
+    .proof-cell strong { display: block; margin-bottom: 5px; color: var(--cream); font-size: 1.6rem; line-height: 1; }
+    .proof-cell:first-child strong { font-size: 1.1rem; line-height: 1.25; }
 
-    ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
-    ol.steps li { position: relative; padding-left: 44px; }
-    ol.steps li::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: -2px;
-      width: 30px; height: 30px; border-radius: 50%; background: var(--chip); color: var(--text);
-      display: grid; place-items: center; font-weight: 700; font-size: 0.9rem; }
+    .section { padding: 120px 0; }
+    .workflow-section { padding-top: 150px; }
+    .workflow-board { margin-top: 50px; padding: 16px; border-radius: 30px; background: rgba(255,255,255,.05); box-shadow: var(--shadow); }
+    .workflow-board img { display: block; width: 100%; border-radius: 20px; }
 
-    pre.code { background: var(--code-bg); color: var(--code-text); padding: 18px; border-radius: 12px;
-      overflow-x: auto; font-size: 0.88rem; line-height: 1.6; border: 1px solid var(--line); }
+    .demo-section { color: var(--ink); background: var(--cream); }
+    .demo-grid { display: grid; grid-template-columns: .72fr 1.28fr; gap: clamp(40px, 7vw, 90px); align-items: center; }
+    .demo-copy ul { padding: 0; margin: 32px 0 0; list-style: none; }
+    .demo-copy li { display: flex; gap: 12px; margin-top: 16px; color: #465066; }
+    .demo-copy li::before { content: "✓"; flex: 0 0 26px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: var(--ink); background: var(--mint); font-weight: 900; }
+    .demo-frame { position: relative; padding: 36px 12px 12px; border-radius: 22px; background: #0a0e16; box-shadow: 0 32px 75px rgba(31, 28, 23, .27); }
+    .demo-dots { position: absolute; left: 18px; top: 15px; display: flex; gap: 7px; }
+    .demo-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--coral); }
+    .demo-dots i:nth-child(2) { background: var(--yellow); }
+    .demo-dots i:nth-child(3) { background: var(--mint); }
+    .demo-frame video { display: block; width: 100%; height: auto; border-radius: 12px; background: #0a0e16; }
 
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr)); gap: 16px; }
-    .card { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 18px; }
-    .card h3 { margin: 0 0 6px; font-size: 1.02rem; }
-    .card p { margin: 0; color: var(--muted); font-size: 0.93rem; }
+    .quickstart { background: var(--paper); }
+    .quick-grid { display: grid; grid-template-columns: .8fr 1.2fr; gap: clamp(48px, 8vw, 110px); align-items: start; }
+    .steps { margin-top: 44px; }
+    .step { display: grid; grid-template-columns: 42px 1fr; gap: 16px; padding: 20px 0; border-top: 1px solid #ddd7cd; }
+    .step-num { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: var(--ink); background: var(--mint); font: 800 .82rem/1 var(--mono); }
+    .step h3 { margin: 2px 0 4px; font-size: 1rem; }
+    .step p { margin: 0; color: var(--muted-dark); font-size: .92rem; }
+    .code-window { overflow: hidden; border: 1px solid #27334a; border-radius: 22px; color: #dce3ef; background: #0c111c; box-shadow: 0 30px 75px rgba(16,23,37,.2); }
+    .code-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #263148; color: #8f9bb0; font: .76rem/1 var(--mono); }
+    .code-window pre { margin: 0; padding: 24px; overflow-x: auto; font-size: .84rem; line-height: 1.75; }
+    .kw { color: #a99fff; } .fn { color: #61d2b4; } .str { color: #ffd166; } .dim { color: #7c879a; }
 
-    .tbl { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-    .tbl th, .tbl td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    .tbl th { color: var(--muted); font-weight: 600; }
-    .tbl code { background: var(--chip); padding: 1px 6px; border-radius: 6px; font-size: 0.86rem; }
-    .scroll-x { overflow-x: auto; }
+    .features { position: relative; overflow: hidden; }
+    .features::before { content: ""; position: absolute; width: 520px; height: 520px; right: -330px; top: 120px; border-radius: 50%; background: var(--violet); opacity: .08; }
+    .bento { margin-top: 54px; display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .feature-card { position: relative; min-height: 230px; padding: 28px; border: 1px solid rgba(255,255,255,.09); border-radius: 22px; background: var(--ink-2); overflow: hidden; }
+    .feature-card h3 { max-width: 390px; margin: 0; font-size: 1.28rem; }
+    .feature-card p { max-width: 470px; margin: 12px 0 0; color: var(--muted); font-size: .92rem; }
+    .feature-card code { color: var(--mint); }
+    .feature-card.wide { grid-column: span 7; }
+    .feature-card.narrow { grid-column: span 5; }
+    .feature-card.third { grid-column: span 4; }
+    .feature-card.mint { color: var(--ink); background: var(--mint); }
+    .feature-card.mint p, .feature-card.yellow p { color: #29483f; }
+    .feature-card.violet { color: var(--white); background: var(--violet); }
+    .feature-card.violet p { color: #dedaff; }
+    .feature-card.yellow { color: var(--ink); background: var(--yellow); }
+    .metric { position: absolute; right: 25px; bottom: 18px; color: rgba(255,255,255,.12); font-size: 5.6rem; line-height: 1; font-weight: 900; letter-spacing: -.08em; }
+    .mint .metric, .yellow .metric { color: rgba(16,23,37,.1); }
+    .route-list { margin-top: 28px; display: grid; gap: 8px; }
+    .route { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(16,23,37,.13); font: 750 .78rem/1 var(--mono); }
+    .route i { height: 5px; border-radius: 6px; background: var(--cream); }
+    .resume-rail { position: relative; margin-top: 42px; height: 48px; }
+    .resume-rail::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 3px; background: #3a4560; }
+    .resume-rail i { position: absolute; top: 13px; width: 22px; height: 22px; border-radius: 50%; border: 4px solid var(--ink-2); background: var(--mint); }
+    .resume-rail i:nth-child(1) { left: 6%; } .resume-rail i:nth-child(2) { left: 35%; } .resume-rail i:nth-child(3) { left: 64%; } .resume-rail i:nth-child(4) { right: 4%; background: var(--violet); }
 
-    dl.cmds { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; margin: 0; }
-    dl.cmds dt { font-family: ui-monospace, monospace; color: var(--accent); white-space: nowrap; }
-    dl.cmds dd { margin: 0; color: var(--muted); }
-    @media (max-width: 620px) { dl.cmds { grid-template-columns: 1fr; gap: 2px 0; } dl.cmds dd { margin-bottom: 10px; } }
+    .builtins { color: var(--ink); background: var(--cream); }
+    .builtin-grid { margin-top: 52px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .builtin { display: grid; grid-template-columns: 52px 1fr; gap: 18px; align-items: start; padding: 24px; border: 1px solid #ddd5c9; border-radius: 18px; background: rgba(255,255,255,.38); }
+    .builtin-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; color: var(--ink); background: var(--mint); font: 900 1.15rem/1 var(--mono); }
+    .builtin:nth-child(2) .builtin-icon { background: var(--violet-soft); }
+    .builtin:nth-child(3) .builtin-icon { background: var(--yellow); }
+    .builtin:nth-child(4) .builtin-icon { color: var(--white); background: var(--violet); }
+    .builtin h3 { margin: 2px 0 5px; font: 750 1rem/1.3 var(--mono); }
+    .builtin p { margin: 0; color: var(--muted-dark); font-size: .9rem; }
 
-    .callout { border: 1px solid var(--accent); border-radius: 12px; padding: 20px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
-    .callout h2 { margin-top: 0; }
+    .reference { background: var(--paper); }
+    .reference-grid { display: grid; grid-template-columns: .75fr 1.25fr; gap: clamp(48px, 8vw, 110px); }
+    .reference-list { border-top: 1px solid #ddd7cd; }
+    details { border-bottom: 1px solid #ddd7cd; }
+    summary { padding: 20px 0; cursor: pointer; list-style: none; color: var(--ink); font-weight: 750; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; float: right; color: var(--violet); font-size: 1.35rem; line-height: 1; }
+    details[open] summary::after { content: "−"; }
+    details p { margin: -5px 0 20px; color: var(--muted-dark); font-size: .93rem; }
+    .command-cloud { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 34px; }
+    .command-cloud code { padding: 9px 12px; border: 1px solid #d9d2c7; border-radius: 10px; color: #404b61; background: #fffdfa; font-size: .78rem; }
 
-    details { border-bottom: 1px solid var(--line); padding: 14px 0; }
-    details summary { cursor: pointer; font-weight: 600; list-style: none; }
-    details summary::-webkit-details-marker { display: none; }
-    details summary::after { content: "+"; float: right; color: var(--muted); }
-    details[open] summary::after { content: "\2013"; }
-    details p { color: var(--muted); margin: 10px 0 0; }
+    .final-cta { padding: 100px 0; }
+    .cta-panel { position: relative; padding: clamp(38px, 7vw, 76px); border-radius: 30px; color: var(--ink); background: var(--mint); overflow: hidden; }
+    .cta-panel::after { content: ""; position: absolute; width: 280px; height: 280px; right: -80px; top: -110px; border-radius: 50%; background: var(--violet); opacity: .17; }
+    .cta-panel h2 { position: relative; z-index: 1; max-width: 820px; margin: 0; font-size: clamp(2.4rem, 6vw, 5.2rem); line-height: .96; letter-spacing: -.065em; }
+    .cta-panel p { position: relative; z-index: 1; max-width: 560px; margin: 20px 0 0; color: #254b42; }
+    .cta-panel .install-box { position: relative; z-index: 1; margin-top: 28px; }
 
-    footer { border-top: 1px solid var(--line); padding: 32px 0 56px; color: var(--muted); font-size: 0.9rem; }
-    footer a { color: var(--muted); }
-    footer .row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
-    .pill { display: inline-block; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--line);
-      border-radius: 999px; padding: 2px 10px; }
+    footer { padding: 40px 0 60px; border-top: 1px solid rgba(255,255,255,.08); color: var(--muted); }
+    .footer-grid { display: grid; grid-template-columns: 1.3fr .7fr; gap: 30px; }
+    .footer-brand { color: var(--cream); font-weight: 800; }
+    .footer-copy { max-width: 600px; margin: 10px 0 0; font-size: .85rem; }
+    .footer-links { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 16px; }
+    .footer-links a { color: var(--muted); font-size: .86rem; text-decoration: none; }
+    .footer-links a:hover { color: var(--cream); }
+
+    @media (max-width: 920px) {
+      .hero { min-height: auto; padding-bottom: 130px; }
+      .hero-grid, .demo-grid, .quick-grid, .reference-grid { grid-template-columns: 1fr; }
+      .agent-stage { width: min(580px, 100%); margin: 45px auto 0; }
+      .proof-grid { grid-template-columns: repeat(3, 1fr); }
+      .proof-cell:first-child { grid-column: 1 / -1; border-bottom: 1px solid rgba(255,255,255,.08); }
+      .proof-cell:nth-child(2) { border-left: 0; }
+      .feature-card.wide, .feature-card.narrow { grid-column: span 6; }
+      .feature-card.third { grid-column: span 4; }
+      .demo-copy { max-width: 700px; }
+    }
+
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      .site-nav { top: 10px; width: calc(100% - 20px); }
+      .nav-inner { min-height: 54px; padding-left: 14px; }
+      .brand span:last-child { display: none; }
+      .nav-links a:not(.nav-cta):not(:last-child) { display: none; }
+      .hero { padding-top: 118px; }
+      .hero h1 { font-size: clamp(3rem, 16vw, 4.6rem); }
+      .install-box { align-items: stretch; }
+      .install-box code { font-size: .72rem; }
+      .copy-btn { padding-inline: 12px; }
+      .agent-stage { min-height: 410px; }
+      .agent-card { width: 85%; padding: 19px; }
+      .agent-card.scan { right: 4px; }
+      .agent-card.review { top: 128px; }
+      .agent-card.result { top: 258px; right: 0; }
+      .proof-grid { grid-template-columns: 1fr; }
+      .proof-cell, .proof-cell:nth-child(2) { min-height: 92px; border-left: 0; border-top: 1px solid rgba(255,255,255,.08); }
+      .proof-cell:first-child { border-top: 0; }
+      .section { padding: 86px 0; }
+      .workflow-section { padding-top: 110px; }
+      .workflow-board { padding: 6px; border-radius: 18px; }
+      .workflow-board img { border-radius: 13px; }
+      .feature-card.wide, .feature-card.narrow, .feature-card.third { grid-column: 1 / -1; }
+      .builtin-grid { grid-template-columns: 1fr; }
+      .footer-grid { grid-template-columns: 1fr; }
+      .footer-links { justify-content: flex-start; }
+      .cta-panel { border-radius: 22px; }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .agent-card { animation: settle .7s cubic-bezier(.2,.7,.2,1) both; }
+      .agent-card.review { animation-delay: .1s; }
+      .agent-card.result { animation-delay: .2s; }
+      @keyframes settle { from { opacity: 0; translate: 0 24px; } to { opacity: 1; translate: 0 0; } }
+      .button, .copy-btn { transition: transform .18s ease, background .18s ease; }
+    }
   </style>
 </head>
 <body>
-  <header class="nav">
-    <div class="wrap nav-inner">
-      <span class="brand">pi-dynamic-workflows</span>
-      <nav class="nav-links" aria-label="Primary">
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="pi-dynamic-workflows home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>pi-dynamic-workflows</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#workflow">How it works</a>
+        <a href="#features">Features</a>
         <a href="#quickstart">Quickstart</a>
-        <a href="#features" class="hide-sm">Features</a>
-        <a href="#ultracode">Ultracode</a>
-        <a href="#commands" class="hide-sm">Commands</a>
-        <a href="#faq" class="hide-sm">FAQ</a>
         <a href="https://github.com/QuintinShaw/pi-dynamic-workflows">GitHub</a>
+        <a class="nav-cta" href="#install">Install</a>
       </nav>
     </div>
   </header>
 
-  <main>
-    <div class="hero">
-      <div class="wrap">
-        <p class="eyebrow">Claude Code–style dynamic workflows for Pi</p>
-        <h1>Turn one prompt into a&nbsp;fleet of subagents.</h1>
-        <p class="lede">A Pi extension that writes a JavaScript orchestration script on the fly, fans your task across many isolated subagents in parallel, has them cross-check each other, and hands back one synthesized answer.</p>
-
-        <div class="install" role="group" aria-label="Install command">
-          <code id="install">pi install npm:@quintinshaw/pi-dynamic-workflows</code>
-          <button type="button" data-copy="#install" aria-label="Copy install command">Copy</button>
+  <main id="top">
+    <section class="hero">
+      <div class="shell hero-grid">
+        <div>
+          <p class="eyebrow">Multi-agent orchestration for Pi</p>
+          <h1>One prompt.<span>A whole team.</span></h1>
+          <p class="hero-lede">Pi writes a deterministic JavaScript workflow, routes work across isolated subagents, cross-checks what they find, and returns one answer—without flooding your context.</p>
+          <div class="install-box" role="group" aria-label="Install command">
+            <code id="hero-install">pi install npm:@quintinshaw/pi-dynamic-workflows</code>
+            <button class="copy-btn" type="button" data-copy="#hero-install">Copy</button>
+          </div>
+          <div class="hero-actions">
+            <a class="button primary" href="#quickstart">Start in 30 seconds</a>
+            <a class="button secondary" href="https://github.com/QuintinShaw/pi-dynamic-workflows">View on GitHub ↗</a>
+          </div>
         </div>
-        <p class="trust">Journaled resume · real per-agent cost accounting · subagent diagnostics</p>
 
-        <div class="cta">
-          <a class="btn primary" href="#quickstart">Get started</a>
-          <a class="btn ghost" href="https://github.com/QuintinShaw/pi-dynamic-workflows">Star on GitHub</a>
-          <span class="pill">v2.13.2 · MIT</span>
+        <div class="agent-stage" aria-label="One task routed through small, medium, and big agents">
+          <article class="agent-card scan">
+            <small>SMALL / SCAN</small>
+            <strong>Find every route.</strong>
+            <div class="terminal-line"><span class="prompt-arrow">›</span><span>src/routes/**/*.ts</span></div>
+          </article>
+          <article class="agent-card review">
+            <small>MEDIUM / REVIEW</small>
+            <strong>Parallel specialists.</strong>
+            <div class="agent-pills" aria-hidden="true"><i></i><i></i><i></i></div>
+          </article>
+          <article class="agent-card result">
+            <small>BIG / SYNTHESIZE</small>
+            <strong>One checked result.</strong>
+            <div class="verify-line"><span class="check">✓</span><span>verified · journaled</span></div>
+          </article>
         </div>
-        <p class="also">Also on <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows">npm</a> · <a href="https://pi.dev/packages/@quintinshaw/pi-dynamic-workflows">Pi package</a></p>
+      </div>
+    </section>
+
+    <div class="proof-bar">
+      <div class="shell proof-grid">
+        <div class="proof-cell"><strong>Built for work too broad for one context window.</strong><p>Codebase audits, large refactors, adversarial review, and source-checked research.</p></div>
+        <div class="proof-cell"><strong>16</strong><p>concurrent agents</p></div>
+        <div class="proof-cell"><strong>1000</strong><p>agents per run</p></div>
+        <div class="proof-cell"><strong>3</strong><p>routed model tiers</p></div>
       </div>
     </div>
 
-    <section id="see">
-      <div class="wrap">
-        <figure>
-          <img class="shot" loading="lazy" decoding="async"
-               src="https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/docs/media/demo.gif"
-               alt="A workflow fanning a task out across subagents in Pi and streaming live progress">
-          <figcaption>Plain-language ask → generated workflow → live, streaming fan-out across subagents, all in the background.</figcaption>
-        </figure>
+    <section class="section workflow-section" id="workflow">
+      <div class="shell">
+        <p class="eyebrow">The orchestration is visible</p>
+        <h2 class="section-title">A deterministic path through parallel work.</h2>
+        <p class="section-copy">The parent writes the plan. Fresh subagent sessions do the noisy work. A final pass verifies the result. Every completed call is journaled, so a resumed run only executes what changed.</p>
+        <div class="workflow-board">
+          <img src="workflow.png" width="1200" height="460" alt="A task becomes deterministic orchestration, parallel routed agents, verification, and one result">
+        </div>
       </div>
     </section>
 
-    <section id="quickstart">
-      <div class="wrap">
-        <h2>Quickstart</h2>
-        <p class="sub">Three steps from install to your first fan-out.</p>
-        <ol class="steps">
-          <li>
-            <strong>Install &amp; reload.</strong>
-            <pre class="code">pi install npm:@quintinshaw/pi-dynamic-workflows
-# then in Pi:
-/reload</pre>
-          </li>
-          <li>
-            <strong>Ask for a workflow in plain language.</strong> Pi writes the script and runs it in the background; a live panel tracks progress.
-            <pre class="code">Run a workflow to audit every route under src/routes/ for missing auth checks.</pre>
-          </li>
-          <li>
-            <strong>Or write one yourself.</strong> A workflow is plain JavaScript — orchestrate subagents with <code>agent()</code>, <code>parallel()</code>, <code>phase()</code>:
-            <pre class="code">export const meta = {
-  name: 'auth_audit',
-  description: 'Find routes missing auth checks and verify the findings',
-  phases: [{ title: 'Scan' }, { title: 'Review' }, { title: 'Verify' }],
+    <section class="section demo-section" id="demo">
+      <div class="shell demo-grid">
+        <div class="demo-copy dark-text">
+          <p class="eyebrow">Real run, not a mockup</p>
+          <h2 class="section-title">Keep working while the fleet runs.</h2>
+          <p class="section-copy">Workflows start in the background. The live panel shows what is running, which model it uses, fresh and cached tokens, cost, and throughput. The conversation continues automatically when the result lands.</p>
+          <ul>
+            <li>Compact or per-agent progress views</li>
+            <li>Pause, resume, stop, restart, and save</li>
+            <li>Inspect prompts, results, failures, and compact history</li>
+          </ul>
+        </div>
+        <div class="demo-frame">
+          <span class="demo-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <video width="900" height="616" autoplay muted loop playsinline controls preload="metadata" poster="demo-poster.jpg" aria-label="A live pi-dynamic-workflows run fanning work across subagents">
+            <source src="demo.mp4" type="video/mp4">
+            Your browser does not support embedded video. <a href="demo.mp4">Open the demo video.</a>
+          </video>
+        </div>
+      </div>
+    </section>
+
+    <section class="section quickstart" id="quickstart">
+      <div class="shell quick-grid dark-text">
+        <div>
+          <p class="eyebrow">Quickstart</p>
+          <h2 class="section-title">From install to fan-out in one minute.</h2>
+          <div class="steps">
+            <div class="step"><span class="step-num">01</span><div><h3>Install and reload</h3><p>Install the Pi package, then run <code>/reload</code> once.</p></div></div>
+            <div class="step"><span class="step-num">02</span><div><h3>Ask naturally</h3><p>Include “workflow” in your request, or force one with <code>/workflows run</code>.</p></div></div>
+            <div class="step"><span class="step-num">03</span><div><h3>Watch or move on</h3><p>Track the live run or keep chatting. The final result comes back automatically.</p></div></div>
+          </div>
+        </div>
+        <div class="code-window" aria-label="Example JavaScript workflow">
+          <div class="code-head"><span>auth-audit.workflow.js</span><span>deterministic</span></div>
+          <pre><span class="kw">export const</span> meta = {
+  name: <span class="str">'auth_audit'</span>,
+  phases: [<span class="str">'Scan'</span>, <span class="str">'Review'</span>, <span class="str">'Verify'</span>],
 }
 
-phase('Scan')
-const files = await agent('List every route file under src/routes/.', { tier: 'small' })
-
-phase('Review')
-const findings = await parallel(
-  files.split('\n').filter(Boolean).map((file) =>
-    () => agent(`Audit ${file} for missing auth checks.`, { tier: 'medium', isolation: 'worktree' }),
-  ),
+<span class="fn">phase</span>(<span class="str">'Scan'</span>)
+<span class="kw">const</span> files = <span class="kw">await</span> <span class="fn">agent</span>(
+  <span class="str">'List every route file.'</span>,
+  { tier: <span class="str">'small'</span> },
 )
 
-phase('Verify')
-return await agent('Synthesize and double-check:\n' + findings.join('\n\n'), { tier: 'big' })</pre>
-          </li>
-        </ol>
-      </div>
-    </section>
+<span class="fn">phase</span>(<span class="str">'Review'</span>)
+<span class="kw">const</span> findings = <span class="kw">await</span> <span class="fn">parallel</span>(
+  files.map(file =&gt; () =&gt; <span class="fn">agent</span>(
+    <span class="str">`Audit ${file} for missing auth.`</span>,
+    { tier: <span class="str">'medium'</span>, isolation: <span class="str">'worktree'</span> },
+  )),
+)
 
-    <section id="features">
-      <div class="wrap">
-        <h2>What you get</h2>
-        <p class="sub">Code-mode subagents — plus the parts a real run needs: journaled resume, git-worktree isolation, real cost accounting, subagent diagnostics, and per-agent model routing.</p>
-        <div class="grid">
-          <div class="card"><h3>Fan-out orchestration</h3><p><code>agent()</code>, <code>parallel()</code>, <code>pipeline()</code>, <code>phase()</code> in a sandboxed script. Up to 16 concurrent / 1000 total subagents; results stay in variables, not the chat.</p></div>
-          <div class="card"><h3>Real model routing</h3><p><code>small</code> / <code>medium</code> / <code>big</code> tiers (or an exact model) per agent. It actually switches the subagent's model — cheap work light, hard synthesis big.</p></div>
-          <div class="card"><h3>Journaled resume</h3><p>An interrupted run replays finished agents from a journal (no re-run, no tokens) and runs only what's left or what you changed. Survives restarts.</p></div>
-          <div class="card"><h3>Git worktree isolation</h3><p><code>isolation: "worktree"</code> gives an agent its own branch, so parallel agents edit the same files without clobbering each other.</p></div>
-          <div class="card"><h3>Real cost accounting</h3><p>Token and dollar cost read from each subagent's session, not estimated. <code>budget</code> gates on the real total; <code>/workflows</code> shows the spend.</p></div>
-          <div class="card"><h3>Background by default</h3><p>The turn ends immediately; a live task panel tracks each run and the result auto-continues the conversation when it lands. <code>/workflows-progress detailed</code> expands the panel inline with per-agent tokens and a live tok/s rate.</p></div>
-          <div class="card"><h3>Interactive /workflows TUI</h3><p>Drill runs → phases → agents → detail in a themed, ANSI-safe navigator. Inspect prompts, results, failure codes, and compact message/tool history; pause, stop, restart, and save runs.</p></div>
-          <div class="card"><h3>Subagent diagnostics</h3><p>Recoverable failures return <code>null</code> without hiding the cause. Empty outputs are marked <code>AGENT_EMPTY_OUTPUT</code> and shown with compact history in <code>/workflows</code>.</p></div>
-          <div class="card"><h3>Quality-pattern stdlib</h3><p>Built-in <code>verify()</code>, <code>judgePanel()</code>, <code>loopUntilDry()</code>, and <code>completenessCheck()</code> for adversarial review, best-of-N, and exhaustive discovery.</p></div>
-          <div class="card"><h3>Ultracode</h3><p><code>/ultracode</code> is a standing opt-in that auto-arms an exhaustive workflow for every substantive message.</p></div>
-          <div class="card"><h3>Deep research, built in</h3><p><code>/deep-research</code> and <code>/adversarial-review</code>: real web search, source cross-checking, skeptic-vetted findings, and cited reports.</p></div>
+<span class="fn">phase</span>(<span class="str">'Verify'</span>)
+<span class="kw">return await</span> <span class="fn">agent</span>(
+  <span class="str">'Double-check these findings:\n'</span> + findings,
+  { tier: <span class="str">'big'</span> },
+)</pre>
         </div>
       </div>
     </section>
 
-    <section id="ultracode">
-      <div class="wrap callout">
-        <h2>Ultracode</h2>
-        <p class="sub">A standing, maximal-effort opt-in: turn it on once and every substantive message fans out.</p>
-        <p>Each message you send auto-arms an <strong>exhaustive multi-agent workflow</strong>: wide fan-out, more reviewers and judges, deeper discovery loops, a completeness check at the end, and big-tier synthesis. No need to type "workflow" each time.</p>
-        <pre class="code">/ultracode          # on — auto-arm an exhaustive workflow for every substantive message
-/ultracode off      # back to normal
-/effort high|ultra  # finer control (high = thorough, ultra = ultracode)</pre>
-        <p>Each tier maps to real, runtime-enforced ceilings — token budget and agent caps — plus guidance that widens fan-out, so a higher tier actually does more work.</p>
-      </div>
-    </section>
+    <section class="section features" id="features">
+      <div class="shell">
+        <p class="eyebrow">Production pieces included</p>
+        <h2 class="section-title">Fan-out is the start, not the whole product.</h2>
+        <p class="section-copy">A real run needs isolation, routing, visibility, recovery, and explicit quality gates. They are all built into the same workflow runtime.</p>
 
-    <section id="commands">
-      <div class="wrap">
-        <h2>Commands</h2>
-        <p class="sub">Installed alongside the <code>workflow</code> tool after <code>/reload</code>.</p>
-        <dl class="cmds">
-          <dt>/workflows</dt><dd>Open the interactive navigator (plain list in print mode).</dd>
-          <dt>/workflows run &lt;prompt&gt;</dt><dd>Force a dynamic workflow for this prompt, even when keyword triggering is off.</dd>
-          <dt>/workflows status &lt;id&gt;</dt><dd>Watch a run live; print its result when it finishes.</dd>
-          <dt>/workflows save &lt;name&gt;</dt><dd>Save the latest run's script as a reusable <code>/&lt;name&gt;</code> command.</dd>
-          <dt>/workflows pause|resume|stop|rm &lt;id&gt;</dt><dd>Manage a run.</dd>
-          <dt>/workflows-trigger off|on|status|set &lt;word&gt;|reset</dt><dd>Disable, restore, or inspect keyword-triggered workflows mode; set a custom trigger word (or reset to the default <code>workflow</code>).</dd>
-          <dt>/workflows-progress compact|detailed|status</dt><dd>Switch the live panel between the compact one-liner and the detailed per-phase/per-agent view (tokens, cost, live tok/s rate).</dd>
-          <dt>/workflows-progress-max &lt;N&gt;</dt><dd>Cap agents shown per phase in detailed mode (1–1000, default 8).</dd>
-          <dt>/workflows-models</dt><dd>Map the small / medium / big tiers to real models.</dd>
-          <dt>/ultracode [off]</dt><dd>Ultracode: auto-arm an exhaustive workflow for every substantive message.</dd>
-          <dt>/effort off|high|ultra</dt><dd>Finer control over the standing opt-in.</dd>
-          <dt>/deep-research &lt;question&gt;</dt><dd>Web-researched, source-cross-checked report.</dd>
-          <dt>/adversarial-review &lt;task&gt;</dt><dd>Findings vetted by skeptical reviewers.</dd>
-          <dt>/multi-perspective "&lt;topic&gt;" [angle …]</dt><dd>Analyze a topic from several independent angles, then synthesize.</dd>
-          <dt>/codebase-audit &lt;scope&gt; "&lt;check&gt;" …</dt><dd>Run parallel checks over a scope, then cross-validate and report.</dd>
-          <dt>/code-review [staged|&lt;range&gt;|&lt;pr&gt;]</dt><dd>Finder → verify → report review over a git diff — working tree, staged, a commit range, or a GitHub PR.</dd>
-        </dl>
-      </div>
-    </section>
-
-    <section id="mapping">
-      <div class="wrap">
-        <h2>How it maps to Claude Code dynamic workflows</h2>
-        <p class="sub">The same model — on Pi, with any provider you're authenticated for.</p>
-        <div class="scroll-x">
-          <table class="tbl">
-            <thead><tr><th>Claude Code dynamic workflows</th><th>pi-dynamic-workflows (on Pi)</th></tr></thead>
-            <tbody>
-              <tr><td>Code-mode orchestration — the model writes a script that drives subagents</td><td>A JS <code>workflow</code> tool running <code>agent()</code> / <code>parallel()</code> / <code>pipeline()</code> / <code>phase()</code> in a vm sandbox</td></tr>
-              <tr><td>Subagents with isolated context</td><td>Fresh in-memory Pi sessions; results held in script variables, not the chat; compact per-agent history is visible in <code>/workflows</code></td></tr>
-              <tr><td>Structured outputs</td><td>JSON-Schema <code>schema</code> → a validated object, with bounded repair if the model misses</td></tr>
-              <tr><td>Background runs</td><td>Non-blocking by default, a live task panel, and auto-continue delivery</td></tr>
-              <tr><td>Resume</td><td><strong>Journaled + replayable</strong> — survives restarts and replays the unchanged prefix</td></tr>
-              <tr><td>Ultracode</td><td><code>/ultracode</code> (or <code>/effort ultra</code>) — auto-arms an exhaustive workflow per substantive message</td></tr>
-              <tr><td>Model selection</td><td><strong>Per-agent / per-phase routing</strong> across any provider Pi can reach</td></tr>
-              <tr><td>—</td><td><strong>Git worktree isolation</strong>, <strong>real cost accounting</strong>, <strong>/deep-research</strong>, and a <strong>quality-pattern stdlib</strong></td></tr>
-            </tbody>
-          </table>
+        <div class="bento">
+          <article class="feature-card wide mint">
+            <h3>Route every job to the right model.</h3>
+            <p>Use <code>small</code>, <code>medium</code>, and <code>big</code> tiers—or pin an exact provider, model, and thinking level.</p>
+            <div class="route-list"><span class="route">small <i></i></span><span class="route">medium <i></i></span><span class="route">big <i></i></span></div>
+          </article>
+          <article class="feature-card narrow">
+            <h3>Resume without paying twice.</h3>
+            <p>Finished calls replay from the journal. Only the changed call and everything after it run again.</p>
+            <div class="resume-rail" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          </article>
+          <article class="feature-card third violet">
+            <h3>Worktree isolation</h3>
+            <p>Parallel agents can edit the same repository without clobbering one another.</p>
+            <span class="metric">↗</span>
+          </article>
+          <article class="feature-card third yellow">
+            <h3>Measured usage</h3>
+            <p>See fresh and cached tokens, cost, and live tok/s from real sessions—not guesses.</p>
+            <span class="metric">$</span>
+          </article>
+          <article class="feature-card third">
+            <h3>Quality patterns</h3>
+            <p><code>verify()</code>, <code>judgePanel()</code>, <code>loopUntilDry()</code>, and <code>completenessCheck()</code>.</p>
+            <span class="metric">✓</span>
+          </article>
         </div>
       </div>
     </section>
 
-    <section id="faq">
-      <div class="wrap">
-        <h2>FAQ</h2>
-        <details><summary>What is pi-dynamic-workflows?</summary><p>A Pi extension that brings Claude Code–style dynamic workflows to Pi. Instead of one model working step by step, Pi writes a JavaScript orchestration script that fans a task out across many isolated subagents in parallel, holds the intermediate work in script variables, and returns only the synthesized result.</p></details>
-        <details><summary>Does it work with any model?</summary><p>Yes. It runs on whatever providers and models Pi is authenticated for, and routes each subagent to a small, medium, or big tier (or an exact model) so cheap work goes to a light model and hard synthesis to a big one.</p></details>
-        <details><summary>What is ultracode?</summary><p>Ultracode is a standing opt-in: type <code>/ultracode</code> and every substantive message auto-arms an exhaustive multi-agent workflow, the way Claude Code's ultracode does. <code>/effort high</code> is the lighter tier, and <code>/ultracode off</code> turns it back off.</p></details>
-        <details><summary>Can an interrupted run resume?</summary><p>Yes. Runs are journaled. A resumed run replays the completed, unchanged agents from the journal (no re-run, no tokens) and only runs what's left or what you changed. The journal survives restarts.</p></details>
-        <details><summary>How is it different from running subagents by hand?</summary><p>The orchestration is code, not chat: fan-out, ordering, and synthesis live in a deterministic script, intermediate results stay out of your context window, and the whole run is journaled so it can resume, show real cost, and be saved as a reusable command.</p></details>
-        <details><summary>How do I debug failing subagents?</summary><p>Open <code>/workflows</code>, drill into the run, phase, and agent detail. Recoverable failures include an error code and message, and each agent detail shows compact message/tool history so <code>null</code> or empty outputs are diagnosable.</p></details>
-        <details><summary>How do I install it?</summary><p>Run <code>pi install npm:@quintinshaw/pi-dynamic-workflows</code> and then <code>/reload</code> in Pi. You get the <code>workflow</code> tool plus the <code>/workflows</code>, <code>/ultracode</code>, <code>/deep-research</code>, <code>/adversarial-review</code>, <code>/multi-perspective</code>, and <code>/codebase-audit</code> commands.</p></details>
+    <section class="section builtins" id="builtins">
+      <div class="shell dark-text">
+        <p class="eyebrow">Ready-made workflows</p>
+        <h2 class="section-title">Use the runtime—or start with a proven pattern.</h2>
+        <p class="section-copy">The package ships with commands for research, review, multi-perspective analysis, and exhaustive codebase checks.</p>
+        <div class="builtin-grid">
+          <article class="builtin"><span class="builtin-icon">R</span><div><h3>/deep-research</h3><p>Web-researched, source-cross-checked reports with citations.</p></div></article>
+          <article class="builtin"><span class="builtin-icon">A</span><div><h3>/adversarial-review</h3><p>Findings investigated, challenged, and reconciled by skeptical reviewers.</p></div></article>
+          <article class="builtin"><span class="builtin-icon">7</span><div><h3>/code-review</h3><p>Seven parallel finder angles, deduplication, verification, and a ranked report.</p></div></article>
+          <article class="builtin"><span class="builtin-icon">∞</span><div><h3>/ultracode</h3><p>A standing opt-in that automatically arms an exhaustive workflow for substantive work.</p></div></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reference" id="reference">
+      <div class="shell reference-grid dark-text">
+        <div>
+          <p class="eyebrow">Operational clarity</p>
+          <h2 class="section-title">Power when you need it. Quiet defaults when you do not.</h2>
+          <p class="section-copy">Runs are backgrounded, sessions stay in memory, and budgets and timeouts remain unbounded unless you explicitly set them.</p>
+          <div class="command-cloud" aria-label="Available commands">
+            <code>/workflows</code><code>/workflows-models</code><code>/workflows-progress</code><code>/workflows-trigger</code><code>/effort</code><code>/ultracode</code>
+          </div>
+        </div>
+        <div class="reference-list">
+          <details open><summary>Can I control cost and concurrency?</summary><p>Yes. Set run, phase, or per-agent budgets; choose concurrency up to 16; and route inexpensive work to a small tier. Defaults remain uncapped until you opt in.</p></details>
+          <details><summary>Can agents modify code safely in parallel?</summary><p>Use <code>isolation: "worktree"</code>. Each agent receives a throwaway git worktree and branch, so overlapping edits do not overwrite one another.</p></details>
+          <details><summary>What happens after a restart?</summary><p>The journal survives. Resume the run and completed calls replay instantly; only the changed or unfinished suffix executes.</p></details>
+          <details><summary>Where is workflow state stored?</summary><p>Global settings live under <code>~/.pi/workflows</code>; project runs, journals, locks, and saved overrides live in a project namespace beneath it.</p></details>
+          <details><summary>Can I inspect a failed subagent?</summary><p>Open <code>/workflows</code> and drill from run to phase to agent. The detail view shows model, prompt, result, failure diagnostics, and compact tool history.</p></details>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta" id="install">
+      <div class="shell">
+        <div class="cta-panel">
+          <h2>Give the next big task a whole team.</h2>
+          <p>Install once, reload Pi, then ask for a workflow in plain language.</p>
+          <div class="install-box" role="group" aria-label="Install command">
+            <code id="footer-install">pi install npm:@quintinshaw/pi-dynamic-workflows</code>
+            <button class="copy-btn" type="button" data-copy="#footer-install">Copy</button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <footer>
-    <div class="wrap">
-      <div class="row">
+    <div class="shell footer-grid">
+      <div>
+        <div class="footer-brand">pi-dynamic-workflows</div>
+        <p class="footer-copy">Claude Code–style dynamic workflows for Pi, extended with model routing, journaled resume, worktree isolation, measured usage, and built-in quality patterns. MIT licensed.</p>
+      </div>
+      <nav class="footer-links" aria-label="Footer navigation">
         <a href="https://github.com/QuintinShaw/pi-dynamic-workflows">GitHub</a>
         <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows">npm</a>
         <a href="https://pi.dev/packages/@quintinshaw/pi-dynamic-workflows">Pi package</a>
         <a href="https://github.com/QuintinShaw/pi-dynamic-workflows#readme">Docs</a>
-        <a href="https://pi.dev">Pi</a>
-      </div>
-      <p>The "code mode for subagents" idea comes from Michael Livs' original <a href="https://github.com/Michaelliv/pi-dynamic-workflows">pi-dynamic-workflows</a> and Anthropic's <a href="https://claude.com/blog/introducing-dynamic-workflows-in-claude-code">dynamic workflows in Claude Code</a>. MIT licensed.</p>
+      </nav>
     </div>
   </footer>
 
   <script>
-    document.querySelectorAll('button[data-copy]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const el = document.querySelector(btn.getAttribute('data-copy'));
-        if (!el) return;
-        const prev = btn.textContent;
+    document.querySelectorAll('[data-copy]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const target = document.querySelector(button.dataset.copy);
+        if (!target) return;
+        const label = button.textContent;
         try {
-          await navigator.clipboard.writeText(el.textContent.trim());
-          btn.textContent = 'Copied';
-        } catch (e) {
-          btn.textContent = 'Copy failed';
+          await navigator.clipboard.writeText(target.textContent.trim());
+          button.textContent = 'Copied';
+        } catch {
+          button.textContent = 'Select';
+          const range = document.createRange();
+          range.selectNodeContents(target);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
         }
-        setTimeout(() => { btn.textContent = prev; }, 1400);
+        window.setTimeout(() => { button.textContent = label; }, 1500);
       });
     });
   </script>
