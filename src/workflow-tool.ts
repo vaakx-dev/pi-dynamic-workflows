@@ -5,8 +5,12 @@ import { listAgentTypes, loadAgentRegistry } from "./agent-registry.js";
 import {
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
+  fmtCost,
+  fmtFull,
+  fmtTokenSegment,
   recomputeWorkflowSnapshot,
   renderWorkflowText,
+  tokenFigures,
   type WorkflowSnapshot,
 } from "./display.js";
 import { WorkflowError, WorkflowErrorCode } from "./errors.js";
@@ -272,10 +276,9 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
       display.complete(snapshot);
 
       // Format token usage (include cost when the provider reports it)
-      const tokenInfo = result.tokenUsage
-        ? `\n\nToken usage: ${result.tokenUsage.total.toLocaleString()} tokens${
-            result.tokenUsage.cost ? ` ($${result.tokenUsage.cost.toFixed(4)})` : ""
-          }`
+      const tokenSegment = fmtTokenSegment(tokenFigures(result.tokenUsage), fmtFull);
+      const tokenInfo = tokenSegment
+        ? `\n\nToken usage: ${tokenSegment}${result.tokenUsage?.cost ? ` (${fmtCost(result.tokenUsage.cost)})` : ""}`
         : "";
 
       const formattedResult =

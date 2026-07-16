@@ -92,9 +92,78 @@ describe("installResultDelivery", () => {
     assert.ok(calls[0].content.includes("All tests passed"), "should contain All tests passed");
     assert.ok(calls[0].content.includes("test-workflow"), "should contain test-workflow");
     assert.ok(calls[0].content.includes("3 agents"), "should contain 3 agents");
-    // locale may format the group separator as ',' / '.' / ' ' / none
-    assert.ok(/50[\s,.]?000/.test(calls[0].content), "should contain 50000 tokens formatted");
+    // deliverText shows "N tok"; the cached segment is omitted with no cache reads.
+    assert.ok(calls[0].content.includes("50.0K tok"), "should show the token count (input+output)");
+    assert.ok(!calls[0].content.includes("cached"), "omits the cached segment when cacheRead is 0");
     assert.ok(calls[0].content.includes("1.5s"), "should contain 1.5s");
+  });
+
+  it("shows the fresh/cache split and cost in the delivery line", () => {
+    const pi = createMockPi();
+    // A caching model: little fresh input+output, most of the tokens are cheap cache reads.
+    const manager = createMockManager(
+      makeRun({
+        result: {
+          agentCount: 2,
+          durationMs: 1000,
+          tokenUsage: { input: 80000, output: 20000, total: 6100000, cacheRead: 6000000, cacheWrite: 0, cost: 6.7 },
+          result: { verdict: "done" },
+        },
+      }),
+    );
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    manager.emit("complete", { runId: "test-run-1" });
+
+    const content = (pi as unknown as { _calls: { content: string }[] })._calls[0].content;
+    assert.ok(content.includes("100.0K tok"), `fresh (input+output) should read as tok; got: ${content}`);
+    assert.ok(content.includes("6.0M cached"), `cacheRead should read as cached; got: ${content}`);
+    assert.ok(content.includes("$6.70"), `cost should be shown; got: ${content}`);
+  });
+
+  it("falls back to the estimated total when the provider reported no usage (#57 regression)", () => {
+    const pi = createMockPi();
+    // Estimate-only run: onUsage never fired, so the breakdown is all-zero while
+    // run-level `total` carries the scalar estimate.
+    const manager = createMockManager(
+      makeRun({
+        result: {
+          agentCount: 2,
+          durationMs: 1000,
+          tokenUsage: { input: 0, output: 0, total: 800, cacheRead: 0, cacheWrite: 0, cost: 0 },
+          result: { verdict: "done" },
+        },
+      }),
+    );
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    manager.emit("complete", { runId: "test-run-1" });
+
+    const content = (pi as unknown as { _calls: { content: string }[] })._calls[0].content;
+    assert.ok(content.includes("800 tok"), `the estimate should survive as the token count; got: ${content}`);
+    assert.ok(!/\b0 tok/.test(content), `must not render a zero breakdown; got: ${content}`);
+  });
+
+  it("suppresses the token segment when the run-level aggregate is all-zero (#57 regression)", () => {
+    const pi = createMockPi();
+    // e.g. a fully journal-replayed resume: every agent came from cache, nothing accrued.
+    const manager = createMockManager(
+      makeRun({
+        result: {
+          agentCount: 3,
+          durationMs: 1500,
+          tokenUsage: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+          result: { verdict: "done" },
+        },
+      }),
+    );
+
+    mod.installResultDelivery(pi as unknown as ExtensionAPI, manager);
+    manager.emit("complete", { runId: "test-run-1" });
+
+    const content = (pi as unknown as { _calls: { content: string }[] })._calls[0].content;
+    assert.ok(!/\b0 tok/.test(content), `an all-zero aggregate must not render "0 tok"; got: ${content}`);
+    assert.ok(content.includes("3 agents"), "the rest of the line is intact");
   });
 
   // ── deliverText: fallback chain ──
@@ -559,6 +628,92 @@ describe("renderPanelDetailed", () => {
       getRun: (id: string) => (id === "r1" ? { snapshot, status } : undefined),
     };
   }
+
+  it("renders a per-agent fresh/cache split when tokenUsage is present", async () => {
+    const { renderPanelDetailed } = await import("../src/task-panel.js");
+    const snapshot = {
+      name: "wf",
+      phases: ["Scan"],
+      currentPhase: "Scan",
+      logs: [],
+      agents: [
+        {
+          id: 1,
+          label: "cached_agent",
+          status: "done",
+          phase: "Scan",
+          tokens: 3100000,
+          // Opus-style: little fresh input+output, most of it cheap cache reads.
+          tokenUsage: { input: 80000, output: 20000, total: 3100000, cacheRead: 3000000, cacheWrite: 0, cost: 0.4 },
+          model: "github-copilot/claude-opus-4.8",
+        },
+      ],
+      tokenUsage: { total: 0, input: 0, output: 0, cost: 0 },
+    };
+    const manager = {
+      listRuns: () => [
+        {
+          runId: "r2",
+          workflowName: "wf",
+          status: "running",
+          agents: snapshot.agents,
+          tokenUsage: snapshot.tokenUsage,
+        },
+      ],
+      getRun: (id: string) => (id === "r2" ? { snapshot, status: "running" } : undefined),
+    };
+    const lines = renderPanelDetailed(manager as never, theme as never, undefined, 8, 1000);
+    assert.ok(
+      lines.some((l) => l.includes("[1] ✓ cached_agent") && /100\.0K tok/.test(l) && /3\.0M cached/.test(l)),
+      `expected a per-agent tok/cached row, got:\n${lines.join("\n")}`,
+    );
+  });
+
+  it("keeps the scalar estimate for cost-only agents instead of a zero breakdown (#57 regression)", async () => {
+    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
+    clearTokenSamples("r3");
+    const snapshot = {
+      name: "wf3",
+      phases: ["P"],
+      currentPhase: "P",
+      logs: [],
+      agents: [
+        {
+          id: 1,
+          label: "cost_only",
+          status: "done",
+          phase: "P",
+          tokens: 384,
+          // Provider billed cost but reported zero token counts.
+          tokenUsage: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0, cost: 0.02 },
+        },
+      ],
+      tokenUsage: { total: 0, input: 0, output: 0, cost: 0.02 },
+    };
+    const manager = {
+      listRuns: () => [
+        {
+          runId: "r3",
+          workflowName: "wf3",
+          status: "running",
+          agents: snapshot.agents,
+          tokenUsage: snapshot.tokenUsage,
+        },
+      ],
+      getRun: (id: string) => (id === "r3" ? { snapshot, status: "running" } : undefined),
+    };
+    const lines = renderPanelDetailed(manager as never, theme as never, undefined, 8, 1000);
+    assert.ok(
+      lines.some((l) => l.includes("[1] ✓ cost_only") && /384 tok/.test(l)),
+      `cost-only agent should show its scalar estimate, got:\n${lines.join("\n")}`,
+    );
+    // The run header guard must agree with the value it gates (no "0 tok" beside a real cost).
+    assert.ok(
+      lines.some((l) => /wf3/.test(l) && /384 tok/.test(l) && /\$0\.02/.test(l)),
+      `run header should show the estimate and the cost, got:\n${lines.join("\n")}`,
+    );
+    assert.ok(!lines.some((l) => /\b0 tok/.test(l)), `no zero breakdown anywhere:\n${lines.join("\n")}`);
+  });
 
   it("renders aggregate tokens, cost, phases, and per-agent rows", async () => {
     const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");

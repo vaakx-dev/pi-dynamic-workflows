@@ -41,7 +41,7 @@ function fakeManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
     runningCount: 1,
     doneCount: 2,
     errorCount: 0,
-    tokenUsage: { input: 100, output: 50, total: 150, cost: 0 },
+    tokenUsage: { input: 100, output: 50, total: 1050, cost: 0, cacheRead: 900, cacheWrite: 0 },
   };
   return {
     listRuns: () => [
@@ -132,6 +132,8 @@ function persistedRunManager(): Pick<WorkflowManager, "listRuns" | "getRun"> {
         phases: ["Build"],
         agents: [{ id: 1, label: "builder", phase: "Build", status: "done", prompt: "build it", result: "ok" }],
         logs: ["done"],
+        // Legacy persisted usage: total only, no fresh/cache breakdown.
+        tokenUsage: { total: 500, cost: 0 },
       } as unknown as PersistedRunState,
     ],
     getRun: () => undefined,
@@ -180,7 +182,8 @@ test("NavigatorModel reads runs, phases, agents, and detail", () => {
   assert.equal(runs.length, 1);
   assert.equal(runs[0].done, 2);
   assert.equal(runs[0].total, 3);
-  assert.equal(runs[0].tokens, 150);
+  assert.equal(runs[0].fresh, 150);
+  assert.equal(runs[0].cacheRead, 900);
 
   const phases = model.phases("run-1");
   assert.deepEqual(
@@ -188,7 +191,7 @@ test("NavigatorModel reads runs, phases, agents, and detail", () => {
     ["Scan", "Report"],
   );
   assert.equal(phases[0].total, 2);
-  assert.equal(phases[0].tokens, 150);
+  assert.equal(phases[0].fresh, 150);
 
   const agents = model.agents("run-1", "Scan");
   assert.deepEqual(
@@ -222,6 +225,13 @@ test("NavigatorModel reads from persisted runs when no live snapshot", () => {
   assert.equal(runs[0].name, "old-run");
   assert.equal(runs[0].done, 1);
   assert.equal(runs[0].total, 1);
+  // Legacy total-only usage surfaces as fresh (tokenFigures fallback).
+  assert.equal(runs[0].fresh, 500);
+  assert.equal(runs[0].cacheRead, 0);
+
+  // The runs list surfaces legacy total-only usage as a plain count.
+  const lines = renderNavigator(new NavigatorState(), model, 80);
+  assert.match(lines.join("\n"), /1\/1 · 500 tok/);
 
   const phases = model.phases("r-old");
   assert.equal(phases.length, 1);
@@ -399,6 +409,7 @@ test("renderNavigator shows runs view with selected row and footer hint", () => 
   const text = lines.join("\n");
   assert.match(text, /Workflows/);
   assert.match(text, /❯ ◆ audit/);
+  assert.match(text, /2\/3 · 150 tok · 900 cached/);
   assert.match(text, /enter open/);
 });
 
@@ -659,4 +670,105 @@ test("renderNavigator footer hint changes based on item under cursor", () => {
   const savedText = renderNavigator(state, model, 80).join("\n");
   assert.notEqual(savedText.indexOf("x delete"), -1, "saved item should show x delete");
   assert.equal(savedText.indexOf("x stop"), -1, "saved item should NOT show x stop");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #57 regressions — the split must survive persistence, and mixed or
+// estimate-only runs must never under-report vs the pre-split scalar.
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("persisted runs keep the per-agent split across sessions (#57 regression)", () => {
+  const model = new NavigatorModel({
+    listRuns: () => [
+      {
+        runId: "r-split",
+        workflowName: "old-split",
+        status: "completed",
+        phases: ["Build"],
+        agents: [
+          {
+            id: 1,
+            label: "builder",
+            phase: "Build",
+            status: "done",
+            prompt: "build it",
+            result: "ok",
+            tokens: 1080,
+            tokenUsage: { input: 60, output: 20, total: 1080, cost: 0.01, cacheRead: 900, cacheWrite: 100 },
+          },
+        ],
+        logs: [],
+        tokenUsage: { input: 60, output: 20, total: 1080, cost: 0.01, cacheRead: 900, cacheWrite: 100 },
+      } as unknown as PersistedRunState,
+    ],
+    getRun: () => undefined,
+  });
+
+  // persistedToSnapshot must carry tokens/tokenUsage through to every view.
+  const agents = model.agents("r-split", "Build");
+  assert.equal(agents[0].tokenUsage?.cacheRead, 900);
+  const phases = model.phases("r-split");
+  // fresh = input+output+cacheWrite (cache writes are billed first-time ingestion).
+  assert.equal(phases[0].fresh, 180);
+  assert.equal(phases[0].cacheRead, 900);
+  const runs = model.runs();
+  assert.equal(runs[0].fresh, 180);
+  assert.equal(runs[0].cacheRead, 900);
+});
+
+test("runs list never under-reports mixed runs (reported + estimate-only agents) (#57 regression)", () => {
+  const model = new NavigatorModel({
+    listRuns: () => [
+      {
+        runId: "r-mixed",
+        workflowName: "mixed",
+        status: "completed",
+        phases: [],
+        agents: [],
+        logs: [],
+        // One agent reported input+output=100; the rest only estimated into total.
+        tokenUsage: { input: 70, output: 30, total: 900, cost: 0, cacheRead: 0, cacheWrite: 0 },
+      } as unknown as PersistedRunState,
+    ],
+    getRun: () => undefined,
+  });
+  assert.equal(model.runs()[0].fresh, 900);
+  const lines = renderNavigator(new NavigatorState(), model, 80);
+  assert.match(lines.join("\n"), /900 tok/);
+});
+
+test("runs list aggregates per-agent figures for live runs whose run-level usage has not landed (#57 regression)", () => {
+  const snapshot = {
+    name: "live-run",
+    phases: ["P"],
+    currentPhase: "P",
+    logs: [],
+    agents: [
+      { id: 1, label: "a", phase: "P", prompt: "x", status: "done", tokens: 1200 },
+      { id: 2, label: "b", phase: "P", prompt: "y", status: "running", tokens: 0 },
+    ],
+    agentCount: 2,
+    runningCount: 1,
+    doneCount: 1,
+    errorCount: 0,
+    // Run-level aggregate only lands at completion — absent while live.
+  } as unknown as WorkflowSnapshot;
+  const model = new NavigatorModel({
+    listRuns: () => [
+      {
+        runId: "r-live",
+        workflowName: "live-run",
+        status: "running",
+        phases: ["P"],
+        agents: snapshot.agents,
+        logs: [],
+      } as unknown as PersistedRunState,
+    ],
+    getRun: (id: string) =>
+      id === "r-live" ? ({ runId: "r-live", status: "running", snapshot } as unknown as ManagedRun) : undefined,
+  });
+  // The list must agree with the phase view (both aggregate per-agent figures).
+  assert.equal(model.runs()[0].fresh, 1200);
+  const lines = renderNavigator(new NavigatorState(), model, 80);
+  assert.match(lines.join("\n"), /1,200 tok|1[ .\u00a0]200 tok/);
 });

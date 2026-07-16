@@ -30,7 +30,13 @@ function agent(
   label: string,
   status: "queued" | "running" | "done" | "error" | "skipped",
   phase?: string,
-  opts?: { resultPreview?: string; tokens?: number; model?: string; prompt?: string },
+  opts?: {
+    resultPreview?: string;
+    tokens?: number;
+    tokenUsage?: { input: number; output: number; total: number; cost: number; cacheRead: number; cacheWrite: number };
+    model?: string;
+    prompt?: string;
+  },
 ) {
   return {
     id,
@@ -40,6 +46,7 @@ function agent(
     prompt: opts?.prompt ?? `execute ${label}`,
     ...(opts?.resultPreview ? { resultPreview: opts.resultPreview } : {}),
     ...(opts?.tokens ? { tokens: opts.tokens } : {}),
+    ...(opts?.tokenUsage ? { tokenUsage: opts.tokenUsage } : {}),
     ...(opts?.model ? { model: opts.model } : {}),
   };
 }
@@ -133,7 +140,8 @@ describe("renderWorkflowText", () => {
     const snap = createWorkflowSnapshot(fakeMeta());
     snap.tokenUsage = { input: 1000, output: 500, total: 1500, cost: 0.042 };
     const text = renderWorkflowLines(snap).join("\n");
-    assert.ok(text.includes("$0.0420"), "should show cost");
+    // fmtCost: 2 decimals from one cent up, 4 below it (shared across all surfaces).
+    assert.ok(text.includes("$0.04"), "should show cost");
   });
 
   it("shows token info without cost when cost is absent", async () => {
@@ -170,6 +178,93 @@ describe("renderWorkflowText", () => {
     // toLocaleString() output depends on locale (UK/US uses commas, PL uses NBSP)
     // Check with a regex matching any thousands separator between 12 and 345
     assert.ok(/12[ ,.\u00a0]345/.test(text), "should show formatted token count");
+  });
+
+  it("shows a fresh/cache split for an agent with tokenUsage", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.agents = [
+      agent(1, "cached-agent", "done", "Research", {
+        tokens: 3_100_000,
+        tokenUsage: { input: 80_000, output: 20_000, total: 3_100_000, cacheRead: 3_000_000, cacheWrite: 0, cost: 0.4 },
+      }),
+    ] as never[];
+    const text = renderWorkflowLines(snap).join("\n");
+    // fresh (input+output = 100,000) reads as "tok"; cacheRead (3,000,000) as "cached" (locale-flexible separators)
+    assert.ok(/100[ ,.\u00a0]000 tok/.test(text), "shows fresh (input+output) as tok");
+    assert.ok(/3[ ,.\u00a0]000[ ,.\u00a0]000 cached/.test(text), "shows cacheRead as cached");
+  });
+
+  it("tokenFigures uses the breakdown when it carries signal and the estimate otherwise", async () => {
+    const { tokenFigures } = await loadDisplay();
+    // Reporting provider: total = input+output+cacheRead+cacheWrite, both paths agree.
+    // cacheWrite counts as fresh — it is first-time ingestion billed at full/premium price.
+    assert.deepEqual(tokenFigures({ input: 80, output: 20, total: 1100, cacheRead: 900, cacheWrite: 100 }), {
+      fresh: 200,
+      cacheRead: 900,
+    });
+    // Cache-creating first turn: the written prefix must not vanish from the count.
+    assert.deepEqual(tokenFigures({ input: 6000, output: 1000, total: 207000, cacheRead: 0, cacheWrite: 200000 }), {
+      fresh: 207000,
+      cacheRead: 0,
+    });
+    // Estimate-only (provider reported nothing): the scalar total survives as fresh.
+    assert.deepEqual(tokenFigures({ input: 0, output: 0, total: 800, cacheRead: 0, cacheWrite: 0 }), {
+      fresh: 800,
+      cacheRead: 0,
+    });
+    // Cost-only agent: all-zero breakdown, scalar estimate alongside.
+    assert.deepEqual(tokenFigures({ input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0, cost: 0.02 }, 384), {
+      fresh: 384,
+      cacheRead: 0,
+    });
+    // Mixed run: some agents reported (input+output=100), the rest only estimated into total.
+    assert.deepEqual(tokenFigures({ input: 70, output: 30, total: 900, cacheRead: 0, cacheWrite: 0 }), {
+      fresh: 900,
+      cacheRead: 0,
+    });
+    // No usage object at all.
+    assert.deepEqual(tokenFigures(undefined, 500), { fresh: 500, cacheRead: 0 });
+    assert.deepEqual(tokenFigures(undefined), { fresh: 0, cacheRead: 0 });
+  });
+
+  it("header falls back to the estimated total when the provider reported no usage (#57 regression)", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    // onUsage never fired: breakdown is all-zero, total carries the estimate.
+    snap.tokenUsage = { input: 0, output: 0, total: 800 };
+    const text = renderWorkflowLines(snap).join("\n");
+    assert.ok(text.includes("800 tok"), `estimate should survive in the header; got: ${text}`);
+    assert.ok(!/\b0 tok/.test(text), `must not render a zero breakdown; got: ${text}`);
+  });
+
+  it("keeps the scalar estimate for a cost-only agent row (#57 regression)", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    snap.agents = [
+      agent(1, "cost-only-agent", "done", "Research", {
+        tokens: 384,
+        tokenUsage: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0, cost: 0.02 },
+      }),
+    ] as never[];
+    const text = renderWorkflowLines(snap).join("\n");
+    assert.ok(/\[384 tok\]/.test(text), `cost-only agent should show its scalar estimate; got: ${text}`);
+  });
+
+  it("suppresses the header token segment for an all-zero usage aggregate (#57 regression)", async () => {
+    const { createWorkflowSnapshot, renderWorkflowLines } = await loadDisplay();
+    const snap = createWorkflowSnapshot(fakeMeta());
+    // e.g. a fully journal-replayed resume, or a run whose agents were all skipped.
+    snap.tokenUsage = { input: 0, output: 0, total: 0 };
+    const text = renderWorkflowLines(snap).join("\n");
+    assert.ok(!/\b0 tok/.test(text), `an all-zero aggregate must not render "0 tok"; got: ${text}`);
+  });
+
+  it("fmtCost never renders a real cost as a zero-looking figure", async () => {
+    const { fmtCost } = await loadDisplay();
+    assert.equal(fmtCost(6.7), "$6.70");
+    assert.equal(fmtCost(0.0042), "$0.0042");
+    assert.equal(fmtCost(0.00003), "<$0.0001");
   });
 
   it("truncates long agent labels", async () => {
@@ -626,8 +721,8 @@ describe("deliverText", () => {
   it("includes token count when available", async () => {
     const { deliverText } = await loadTaskPanel();
     const text = deliverText(fakeManagedRun());
-    assert.ok(text.includes("150"), "should show token count");
-    assert.ok(text.includes("tokens"), "should mention tokens");
+    assert.ok(text.includes("150"), "should show the token count");
+    assert.ok(text.includes("tok"), "should label the token count");
   });
 
   it("includes agent count", async () => {

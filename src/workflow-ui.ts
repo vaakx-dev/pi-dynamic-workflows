@@ -16,7 +16,9 @@
 import type { ExtensionAPI, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { parseKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { AgentUsage } from "./agent.js";
 import type { WorkflowAgentSnapshot, WorkflowSnapshot } from "./display.js";
+import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow } from "./saved-commands.js";
 import type { WorkflowManager } from "./workflow-manager.js";
@@ -58,14 +60,20 @@ interface RunRow {
   status: string;
   done: number;
   total: number;
-  tokens: number;
+  /** Fresh tokens for the whole run (see tokenFigures for the fallback rule). */
+  fresh: number;
+  /** Cache-read tokens for the whole run. */
+  cacheRead: number;
   cost: number;
 }
 interface PhaseRow {
   title: string;
   done: number;
   total: number;
-  tokens: number;
+  /** Fresh tokens summed across the phase's agents. */
+  fresh: number;
+  /** Cache-read tokens summed across the phase's agents. */
+  cacheRead: number;
 }
 interface AgentRow {
   id: number;
@@ -73,6 +81,7 @@ interface AgentRow {
   status: string;
   phase?: string;
   tokens?: number;
+  tokenUsage?: AgentUsage;
   model?: string;
 }
 
@@ -102,14 +111,24 @@ export class NavigatorModel {
     return this.manager.listRuns().map((p) => {
       const live = this.manager.getRun(p.runId);
       const agents = (live?.snapshot.agents ?? p.agents) as WorkflowAgentSnapshot[];
+      const usage = live?.snapshot.tokenUsage ?? p.tokenUsage;
+      // The run-level aggregate is authoritative but only lands when the run
+      // ends; per-agent figures update live. Use whichever accounts for more
+      // tokens, so live runs show a count in the list (agreeing with the phase
+      // view) and finished/legacy runs keep the final aggregate.
+      const fromUsage = tokenFigures(usage);
+      const fromAgents = aggregateAgentUsage(agents);
+      const figures =
+        fromAgents.fresh + fromAgents.cacheRead > fromUsage.fresh + fromUsage.cacheRead ? fromAgents : fromUsage;
       return {
         runId: p.runId,
         name: live?.snapshot.name ?? p.workflowName,
         status: live?.status ?? p.status,
         done: agents.filter((a) => a.status === "done").length,
         total: agents.length,
-        tokens: (live?.snapshot.tokenUsage ?? p.tokenUsage)?.total ?? 0,
-        cost: (live?.snapshot.tokenUsage ?? p.tokenUsage)?.cost ?? 0,
+        fresh: figures.fresh,
+        cacheRead: figures.cacheRead,
+        cost: usage?.cost ?? 0,
       };
     });
   }
@@ -147,11 +166,13 @@ export class NavigatorModel {
     }
     return order.map((title) => {
       const agents = byPhase.get(title) ?? [];
+      const usage = aggregateAgentUsage(agents);
       return {
         title,
         done: agents.filter((a) => a.status === "done").length,
         total: agents.length,
-        tokens: agents.reduce((n, a) => n + (a.tokens ?? 0), 0),
+        fresh: usage.fresh,
+        cacheRead: usage.cacheRead,
       };
     });
   }
@@ -161,7 +182,15 @@ export class NavigatorModel {
     if (!snap) return [];
     return snap.agents
       .filter((a) => (a.phase ?? "(no phase)") === phase)
-      .map((a) => ({ id: a.id, label: a.label, status: a.status, phase: a.phase, tokens: a.tokens, model: a.model }));
+      .map((a) => ({
+        id: a.id,
+        label: a.label,
+        status: a.status,
+        phase: a.phase,
+        tokens: a.tokens,
+        tokenUsage: a.tokenUsage,
+        model: a.model,
+      }));
   }
 
   agentDetail(runId: string, agentId: number): WorkflowAgentSnapshot | undefined {
@@ -196,6 +225,8 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
       errorCode: a.errorCode,
       recoverable: a.recoverable,
       history: a.history,
+      tokens: a.tokens,
+      tokenUsage: a.tokenUsage,
       model: a.model,
     })),
     agentCount: p.agents.length,
@@ -327,10 +358,6 @@ function pad(n: number): string {
   return n.toLocaleString();
 }
 
-function fmtTokens(t: number): string {
-  return t > 0 ? `${pad(t)} tok` : "";
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Two-pane (Phases | agents) renderer — Claude-Code parity.
 //
@@ -451,7 +478,7 @@ function rightAgentRow(
   theme: ThemeLike,
 ): string {
   const dotColor = AGENT_DOT_COLOR[a.status] ?? "dim";
-  const stats = `${compactTokens(a.tokens ?? 0)} tok`;
+  const stats = fmtTokenSegment(tokenFigures(a.tokenUsage, a.tokens), compactTokens);
   const model = shortModel(a.model) ?? "";
 
   // Stable 2-cell marker so columns never shift on selection: "› " | "  ".
@@ -763,9 +790,8 @@ export function renderNavigator(
     // Render runs
     runs.forEach((r, i) => {
       const icon = STATUS_ICON[r.status] ?? "?";
-      const meta = [`${r.done}/${r.total}`, fmtTokens(r.tokens), r.cost > 0 ? `$${r.cost.toFixed(4)}` : ""]
-        .filter(Boolean)
-        .join(" · ");
+      const tok = fmtTokenSegment(r, pad);
+      const meta = [`${r.done}/${r.total}`, tok, r.cost > 0 ? fmtCost(r.cost) : ""].filter(Boolean).join(" · ");
       lines.push(sel(i, `${icon} ${r.name}  ${dim(`${r.runId} · ${r.status} · ${meta}`)}`));
     });
     // Render saved workflows after a separator
@@ -853,18 +879,21 @@ function twoPaneHeader(
   const status = model.runStatus(runId);
   let done = 0;
   let total = 0;
-  let tokens = 0;
+  let fresh = 0;
+  let cacheRead = 0;
   for (const p of phases) {
     done += p.done;
     total += p.total;
-    tokens += p.tokens;
+    fresh += p.fresh;
+    cacheRead += p.cacheRead;
   }
   // Line 0 — name (accent + bold), truncated to width if needed.
   const nameText = truncateToWidth(name, width, ELLIPSIS, false);
   const line0 = theme.fg("accent", theme.bold(nameText));
 
   // Line 1 — left status, right summary.
-  const rightRaw = `${done}/${total} ${pluralize("agent", total)}${tokens > 0 ? ` · ${compactTokens(tokens)} tok` : ""}`;
+  const headerSegment = fmtTokenSegment({ fresh, cacheRead }, compactTokens);
+  const rightRaw = `${done}/${total} ${pluralize("agent", total)}${headerSegment ? ` · ${headerSegment}` : ""}`;
   const rightW = visibleWidth(rightRaw);
   const gap = 2;
   let line1: string;
