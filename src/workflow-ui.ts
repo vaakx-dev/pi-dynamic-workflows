@@ -17,7 +17,7 @@ import type { ExtensionAPI, ExtensionUIContext, Theme } from "@earendil-works/pi
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { parseKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { AgentUsage } from "./agent.js";
-import type { WorkflowAgentSnapshot, WorkflowSnapshot } from "./display.js";
+import type { ThemeLike, WorkflowAgentSnapshot, WorkflowSnapshot } from "./display.js";
 import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow } from "./saved-commands.js";
@@ -36,12 +36,6 @@ const STATUS_ICON: Record<string, string> = {
   aborted: "⊘",
   skipped: "⊘",
 };
-
-/** Minimal theme surface so rendering is testable without the real Theme class. */
-export interface ThemeLike {
-  fg(color: string, text: string): string;
-  bold(text: string): string;
-}
 
 const PLAIN: ThemeLike = { fg: (_c, t) => t, bold: (t) => t };
 

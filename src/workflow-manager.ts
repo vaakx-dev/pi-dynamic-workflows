@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { WorkflowAgent } from "./agent.js";
 import { preview, type WorkflowSnapshot } from "./display.js";
-import { WorkflowError, WorkflowErrorCode } from "./errors.js";
+import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 import {
   createRunPersistence,
   generateRunId,
@@ -473,8 +473,7 @@ export class WorkflowManager extends EventEmitter {
               { recoverable: true },
             );
 
-      const usageLimitPaused =
-        !managed.controller.signal.aborted && workflowError.code === WorkflowErrorCode.PROVIDER_USAGE_LIMIT;
+      const usageLimitPaused = !managed.controller.signal.aborted && isProviderUsageLimit(workflowError);
       if (managed.controller.signal.aborted) {
         // Intentional abort (pause/stop/Esc) — preserve status set by pause()/stop()
         if (managed.status === "running") {
@@ -577,14 +576,9 @@ export class WorkflowManager extends EventEmitter {
         autoResume: managed.autoResume,
         // Why a usage-limit pause happened, so the navigator / a future cold start
         // can show it and (eventually) re-arm resume after the budget refills.
-        pauseReason:
-          managed.status === "paused" && managed.error?.code === WorkflowErrorCode.PROVIDER_USAGE_LIMIT
-            ? "usage_limit"
-            : undefined,
+        pauseReason: managed.status === "paused" && isProviderUsageLimit(managed.error) ? "usage_limit" : undefined,
         resetHint:
-          managed.status === "paused" && managed.error?.code === WorkflowErrorCode.PROVIDER_USAGE_LIMIT
-            ? managed.error.resetHint
-            : undefined,
+          managed.status === "paused" && isProviderUsageLimit(managed.error) ? managed.error.resetHint : undefined,
         phases: managed.snapshot.phases,
         currentPhase: managed.snapshot.currentPhase,
         // Real per-agent timestamps only (see agentTimestamps) — never the run's
