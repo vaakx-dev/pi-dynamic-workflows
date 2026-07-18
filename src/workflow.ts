@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
 import type { Node } from "acorn";
@@ -19,6 +20,27 @@ import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
+
+/**
+ * Batch-scoped cancellation for a single parallel()/pipeline() fan-out. When a
+ * fan-out's agent() calls reserve past maxAgents, the breaching call throws and
+ * the whole fan-out rejects — but agents already reserved and queued behind the
+ * limiter would otherwise keep draining and spending. parallel()/pipeline()
+ * establish a fresh store per call via fanoutScope.run(); agent() captures the
+ * nearest enclosing store synchronously (before suspending on the limiter) so a
+ * still-queued agent can bail once ITS OWN fan-out breaches, without touching
+ * sibling fan-outs running concurrently or an enclosing fan-out when this one is
+ * nested inside it (each nesting level gets its own store via ALS scoping).
+ *
+ * Scope note: cancellation is bounded PER breaching fan-out, not run-global — a
+ * deliberate tradeoff. Deep-sixing the earlier run-global flag was required
+ * because it wrongly cancelled an innocent, independently-caught sibling batch.
+ * The consequence: if one fan-out breaches while an unrelated in-cap sibling or
+ * a nested inner fan-out is mid-flight, that other batch is NOT cancelled and
+ * finishes its already-reserved agents (still capped at maxAgents total). Only
+ * the breaching fan-out's own queue is short-circuited.
+ */
+const fanoutScope = new AsyncLocalStorage<{ cancelled: boolean }>();
 
 export interface WorkflowMetaPhase {
   title: string;
@@ -338,6 +360,13 @@ export async function runWorkflow<T = unknown>(
     remaining: () => (options.tokenBudget == null ? Infinity : Math.max(0, options.tokenBudget - shared.spent)),
   });
 
+  const agentLimitError = () =>
+    new WorkflowError(
+      `Agent limit exceeded (${maxAgents}). Use maxAgents option to increase the limit.`,
+      WorkflowErrorCode.AGENT_LIMIT_EXCEEDED,
+      { recoverable: false },
+    );
+
   const throwIfAborted = () => {
     if (options.signal?.aborted) {
       throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true });
@@ -347,13 +376,19 @@ export async function runWorkflow<T = unknown>(
   const agent = async (prompt: string, agentOptions: AgentOptions = {}) => {
     throwIfAborted();
 
-    // Check agent limit
+    // Capture the enclosing parallel()/pipeline() fan-out's cancellation batch
+    // (if any) synchronously, while the ALS context of the caller is still
+    // active — i.e. before suspending on the limiter below. The limiter body
+    // closes over this so a still-queued agent can bail once its OWN fan-out
+    // breaches the cap, without affecting sibling or outer fan-outs.
+    const batch = fanoutScope.getStore();
+
+    // Check agent limit. A fan-out that overshoots the cap has already reserved
+    // and queued up to `maxAgents` agents; the breaching call throws here, and
+    // parallel()/pipeline() mark their own batch cancelled so the already-queued
+    // agents short-circuit before their real API call (see the limiter body).
     if (shared.agentCount >= maxAgents) {
-      throw new WorkflowError(
-        `Agent limit exceeded (${maxAgents}). Use maxAgents option to increase the limit.`,
-        WorkflowErrorCode.AGENT_LIMIT_EXCEEDED,
-        { recoverable: false },
-      );
+      throw agentLimitError();
     }
 
     if (budget.total !== null && budget.remaining() <= 0) {
@@ -492,6 +527,10 @@ export async function runWorkflow<T = unknown>(
           usage = undefined;
           try {
             throwIfAborted();
+            // This agent's own fan-out already breached maxAgents while this
+            // call sat queued behind the limiter; bail before spending on the
+            // real API call instead of draining the whole reserved queue.
+            if (batch?.cancelled) throw agentLimitError();
 
             // Run agent with timeout
             const result = await withTimeout(
@@ -606,21 +645,35 @@ export async function runWorkflow<T = unknown>(
     if (thunks.some((thunk) => typeof thunk !== "function")) {
       throw new TypeError("parallel() expects an array of functions, not promises. Wrap each call: () => agent(...)");
     }
-    return Promise.all(
-      thunks.map(async (thunk, index) => {
-        try {
-          return await thunk();
-        } catch (error) {
-          if (options.signal?.aborted) throw error;
-          const workflowError = wrapError(error);
-          // Non-recoverable failures (token budget / agent limit exhausted) must
-          // halt the whole run, exactly like a directly-awaited agent() — not be
-          // swallowed into a null in the result array.
-          if (!workflowError.recoverable) throw workflowError;
-          log(`parallel[${index}] failed: ${workflowError.message}`);
-          return null;
-        }
-      }),
+    // Batch-scoped cancellation: agent() calls made (directly or transitively)
+    // from these thunks see this store via fanoutScope.getStore(). A breach in
+    // THIS fan-out flips `cancelled` so its own still-queued agents bail, without
+    // touching a sibling fan-out running concurrently or an enclosing one.
+    const batch = { cancelled: false };
+    return fanoutScope.run(batch, () =>
+      Promise.all(
+        thunks.map(async (thunk, index) => {
+          try {
+            return await thunk();
+          } catch (error) {
+            if (options.signal?.aborted) throw error;
+            const workflowError = wrapError(error);
+            // Non-recoverable failures (token budget / agent limit exhausted) must
+            // halt the whole run, exactly like a directly-awaited agent() — not be
+            // swallowed into a null in the result array.
+            if (!workflowError.recoverable) {
+              // Only a breached agent cap cancels the rest of this batch; the
+              // token budget stays a soft gate by design (in-flight agents may
+              // finish past it), and other non-recoverable errors don't imply
+              // the rest of the batch is doomed.
+              if (workflowError.code === WorkflowErrorCode.AGENT_LIMIT_EXCEEDED) batch.cancelled = true;
+              throw workflowError;
+            }
+            log(`parallel[${index}] failed: ${workflowError.message}`);
+            return null;
+          }
+        }),
+      ),
     );
   };
 
@@ -633,25 +686,32 @@ export async function runWorkflow<T = unknown>(
     if (stages.some((stage) => typeof stage !== "function")) {
       throw new TypeError("pipeline() stages must be functions: pipeline(items, item => ..., result => ...)");
     }
-    return Promise.all(
-      items.map(async (item, index) => {
-        let value: unknown = item;
-        for (const stage of stages) {
-          try {
-            throwIfAborted();
-            value = await stage(value, item, index);
-            throwIfAborted();
-          } catch (error) {
-            if (options.signal?.aborted) throw error;
-            const workflowError = wrapError(error);
-            // Non-recoverable failures halt the whole run (see parallel()).
-            if (!workflowError.recoverable) throw workflowError;
-            log(`pipeline[${index}] failed: ${workflowError.message}`);
-            return null;
+    // Batch-scoped cancellation — see parallel() for the rationale.
+    const batch = { cancelled: false };
+    return fanoutScope.run(batch, () =>
+      Promise.all(
+        items.map(async (item, index) => {
+          let value: unknown = item;
+          for (const stage of stages) {
+            try {
+              throwIfAborted();
+              value = await stage(value, item, index);
+              throwIfAborted();
+            } catch (error) {
+              if (options.signal?.aborted) throw error;
+              const workflowError = wrapError(error);
+              // Non-recoverable failures halt the whole run (see parallel()).
+              if (!workflowError.recoverable) {
+                if (workflowError.code === WorkflowErrorCode.AGENT_LIMIT_EXCEEDED) batch.cancelled = true;
+                throw workflowError;
+              }
+              log(`pipeline[${index}] failed: ${workflowError.message}`);
+              return null;
+            }
           }
-        }
-        return value;
-      }),
+          return value;
+        }),
+      ),
     );
   };
 
@@ -849,11 +909,7 @@ export async function runWorkflow<T = unknown>(
     throwIfAborted();
     if (typeof promptText !== "string") throw new TypeError("checkpoint(promptText, options?) needs a prompt string");
     if (shared.agentCount >= maxAgents) {
-      throw new WorkflowError(
-        `Agent limit exceeded (${maxAgents}). Use maxAgents option to increase the limit.`,
-        WorkflowErrorCode.AGENT_LIMIT_EXCEEDED,
-        { recoverable: false },
-      );
+      throw agentLimitError();
     }
     const callIndex = state.callSeq++;
     const callHash = hashCheckpoint(promptText, checkpointOptions);

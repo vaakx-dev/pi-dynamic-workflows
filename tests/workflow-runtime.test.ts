@@ -584,6 +584,100 @@ return xs`;
   );
 });
 
+test("a fan-out past maxAgents cancels queued agents instead of draining the reserved queue", async () => {
+  // A parallel() overshoot reserves and queues up to maxAgents agents behind the
+  // limiter. Before the fix, every reserved agent ran its real API call (spending)
+  // even though the fan-out had already rejected; now the breach short-circuits the
+  // still-queued agents so at most ~concurrency of them execute.
+  const fanout = 100;
+  const maxAgents = 50;
+  const concurrency = 4;
+  const calls = { count: 0 };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const runner = {
+    async run(prompt: string) {
+      calls.count++;
+      await gate; // stay in-flight/queued while the limit breach propagates
+      return `ran:${prompt}`;
+    },
+  };
+  const script = `export const meta = { name: 'c4', description: 'fanout cancel' }
+const xs = await parallel(Array.from({ length: ${fanout} }, (_, i) => () => agent('x' + i, { label: 'a' + i })))
+return xs`;
+  const run = runWorkflow(script, { agent: runner, maxAgents, concurrency, persistLogs: false });
+  await assert.rejects(run, /limit/i);
+  release();
+  await new Promise((r) => setTimeout(r, 50)); // let any queued agents drain
+  // Deterministically exactly `concurrency`: the limiter runs the first
+  // `concurrency` submissions' bodies synchronously during the reservation
+  // pass (each immediately calls runner.run() and then suspends on `gate`);
+  // every submission after that suspends on the limiter's internal queue
+  // before it ever reaches runner.run(), and the batch is cancelled (via
+  // fanoutScope) before any of them get their turn.
+  assert.equal(calls.count, concurrency);
+});
+
+test("sibling parallel() batches are isolated: one breaching maxAgents does not cancel the other", async () => {
+  // Two independent parallel() fan-outs run CONCURRENTLY inside the same run
+  // (sharing one shared.agentCount / maxAgents), each isolated via its own
+  // .then(ok, err). Batch A (3 agents) never breaches; batch B (40 agents)
+  // does. Before batch-scoped cancellation, a run-global "limitReached" flag
+  // would wrongly cancel A's still-queued agents too, purely because B (an
+  // unrelated fan-out) breached the shared cap — that's the regression this
+  // guards against.
+  const maxAgents = 10;
+  const concurrency = 2;
+  const runner = {
+    async run(prompt: string) {
+      await new Promise((r) => setTimeout(r, 5));
+      return `ran:${prompt}`;
+    },
+  };
+  const script = `export const meta = { name: 'sib', description: 'sibling isolation' }
+const batchA = parallel(Array.from({ length: 3 }, (_, i) => () => agent('a' + i, { label: 'a' + i })))
+  .then((r) => ({ ok: true, r }), (e) => ({ ok: false, code: e && e.code }))
+const batchB = parallel(Array.from({ length: 40 }, (_, i) => () => agent('b' + i, { label: 'b' + i })))
+  .then((r) => ({ ok: true, r }), (e) => ({ ok: false, code: e && e.code }))
+const [a, b] = await Promise.all([batchA, batchB])
+return { a, b }`;
+  const res = await runWorkflow<{
+    a: { ok: boolean; r?: unknown[] };
+    b: { ok: boolean; code?: string };
+  }>(script, { agent: runner, maxAgents, concurrency, persistLogs: false });
+
+  assert.equal(res.result.a.ok, true, "batch A (never breaches) must resolve, not be cancelled by sibling B");
+  assert.equal(res.result.a.r?.length, 3);
+  assert.ok((res.result.a.r as unknown[]).every((r) => typeof r === "string" && r.startsWith("ran:")));
+
+  assert.equal(res.result.b.ok, false, "batch B (breaches maxAgents) must reject");
+  assert.equal(res.result.b.code, WorkflowErrorCode.AGENT_LIMIT_EXCEEDED);
+});
+
+test("a breach in a nested parallel() doesn't corrupt the outer batch's state", async () => {
+  // Outer parallel() of two thunks; one thunk runs an inner parallel() that
+  // breaches a low maxAgents. The breach should propagate as a rejection of
+  // the whole run (agent limit is non-recoverable) without throwing anything
+  // unexpected (e.g. an ALS/ordering bug corrupting shared.agentCount).
+  const runner = {
+    async run(prompt: string) {
+      return `ran:${prompt}`;
+    },
+  };
+  const script = `export const meta = { name: 'nest', description: 'nested fanout' }
+const xs = await parallel([
+  () => agent('outer-1', { label: 'outer-1' }),
+  () => parallel(Array.from({ length: 5 }, (_, i) => () => agent('inner' + i, { label: 'inner' + i }))),
+])
+return xs`;
+  await assert.rejects(
+    () => runWorkflow(script, { agent: runner, maxAgents: 2, concurrency: 2, persistLogs: false }),
+    /limit/i,
+  );
+});
+
 // ─── Additional edge case tests ─────────────────────────────────────────────────
 
 test("runWorkflow returns meta, logs, phases, and duration", async () => {
