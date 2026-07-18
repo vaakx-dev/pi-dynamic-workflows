@@ -103,6 +103,8 @@ export type {
 } from "./workflow-control-tool.js";
 export { createWorkflowControlTool } from "./workflow-control-tool.js";
 export {
+  type ArmReason,
+  buildArmedWorkflowPrompt,
   buildForcedWorkflowPrompt,
   colorizeWorkflow,
   endsWithTrigger,

@@ -108,7 +108,10 @@ test("/workflows run <prompt> sends a forced workflow follow-up turn", async () 
   await h.run("run audit auth boundaries");
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0].customType, "workflow-run");
+  // #P5: /workflows run is an explicit command → forcing directive (no question-escape).
   assert.equal(h.sent[0].content, buildForcedWorkflowPrompt("audit auth boundaries"));
+  assert.doesNotMatch(h.sent[0].content ?? "", /answer it directly and stay/i, "no question-answer escape");
+  assert.match(h.sent[0].content ?? "", /Call the `workflow` tool now/i, "forces the tool call");
   assert.equal(h.sent[0].options?.triggerTurn, true);
   assert.equal(h.sent[0].options?.deliverAs, "followUp");
   assert.deepEqual(h.activeTools, [WORKFLOW_TOOL_NAME], "does not duplicate an already-active workflow tool");

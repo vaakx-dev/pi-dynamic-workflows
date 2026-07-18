@@ -6,7 +6,13 @@ import test from "node:test";
 import type { AgentUsage } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
 import { WorkflowManager } from "../src/workflow-manager.js";
-import { backgroundStartedText, createWorkflowTool, modelRoutingGuideline } from "../src/workflow-tool.js";
+import {
+  backgroundStartedText,
+  createWorkflowTool,
+  modelRoutingGuideline,
+  WORKFLOW_GATE_GUIDELINE,
+  workflowHowToGuidelines,
+} from "../src/workflow-tool.js";
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 /** Minimal fake ModelRegistry, matching the shape the PR's existing tests use. */
@@ -66,24 +72,68 @@ test("createWorkflowTool has promptSnippet", () => {
   assert.ok(tool.promptSnippet.includes("workflow"), "should contain workflow");
 });
 
-test("createWorkflowTool has promptGuidelines array", () => {
+test("createWorkflowTool always-on promptGuidelines is only the single gate line", () => {
   const tool = createWorkflowTool();
   assert.ok(Array.isArray(tool.promptGuidelines), "tool.promptGuidelines should be an array");
-  assert.ok(tool.promptGuidelines.length > 5, "should have several guidelines");
+  // #65 / #88: the always-on prompt is a single opt-in gate; the ~20 how-to lines
+  // are NOT always-on — they live in workflowHowToGuidelines (armed-turn only).
+  assert.equal(tool.promptGuidelines.length, 1, "always-on guidelines should be a single gate line");
+  assert.equal(tool.promptGuidelines[0], WORKFLOW_GATE_GUIDELINE);
+  assert.match(tool.promptGuidelines[0], /ONLY call it when the user explicitly opts in/);
+  // The how-to mechanics must NOT be always-on.
+  const all = tool.promptGuidelines.join(" ");
+  assert.doesNotMatch(all, /export const meta = \{/, "meta how-to must not be always-on");
+  assert.doesNotMatch(all, /parallel\(\) takes functions/, "parallel how-to must not be always-on");
 });
 
-test("createWorkflowTool routes normal work through tiers and reserves exact models for user requests", () => {
+test("workflowHowToGuidelines carries the full how-to for an armed turn", () => {
+  const guidelines = workflowHowToGuidelines();
+  assert.ok(Array.isArray(guidelines), "workflowHowToGuidelines should be an array");
+  assert.ok(guidelines.length > 5, "should have several how-to guidelines");
+});
+
+// #P4 (R3): the always-on gate must OFFER rather than FORCE, and must include
+// task-shape positives so it doesn't lean toward under-triggering off-keyword.
+test("WORKFLOW_GATE_GUIDELINE offers (not forces) and carries task-shape positives", () => {
+  const gate = WORKFLOW_GATE_GUIDELINE;
+  // Offer-with-cost, not force.
+  assert.match(gate, /you may briefly offer it \(with a rough cost\)/i, "keeps the non-forcing offer");
+  assert.ok(!/\bMUST\b/.test(gate), "the gate must not force with MUST");
+  // Keeps the explicit-opt-in gate + the negative.
+  assert.match(gate, /ONLY call it when the user explicitly opts in/i);
+  assert.match(gate, /even one that would clearly benefit — do not call it/i);
+  // Task-shape positives (#P4).
+  assert.match(gate, /repo-wide inspection/i);
+  assert.match(gate, /independent parallel research\/checks/i);
+  assert.match(gate, /multi-perspective review/i);
+  assert.match(gate, /fan-out\/fan-in synthesis/i);
+});
+
+// #P2: the how-to mechanics now live in the tool's static description (visible
+// whenever the model looks at the tool), NOT in the always-on prompt.
+test("createWorkflowTool folds the how-to into the tool description", () => {
   const tool = createWorkflowTool();
-  const all = tool.promptGuidelines.join(" ");
+  assert.match(tool.description, /How to write the script:/);
+  assert.match(tool.description, /export const meta = \{/, "meta how-to should be in the description");
+  assert.match(
+    tool.description,
+    /parallel\(\) takes functions, not promises/,
+    "mechanics how-to should be in the description",
+  );
+  // And it must NOT have leaked back into the always-on gate.
+  assert.doesNotMatch(tool.promptGuidelines.join(" "), /export const meta = \{/);
+});
+
+test("workflowHowToGuidelines routes normal work through tiers and reserves exact models for user requests", () => {
+  const all = workflowHowToGuidelines().join(" ");
 
   assert.match(all, /opts\.tier/);
   assert.match(all, /small.+medium.+big/s);
   assert.match(all, /opts\.model only when the user names/i);
 });
 
-test("createWorkflowTool promptGuidelines keep budget and timeout unbounded by default", () => {
-  const tool = createWorkflowTool();
-  const all = tool.promptGuidelines.join(" ");
+test("workflowHowToGuidelines keep budget and timeout unbounded by default", () => {
+  const all = workflowHowToGuidelines().join(" ");
   assert.match(all, /do not set tokenBudget or agentTimeoutMs/i);
   assert.match(all, /defaults are unbounded/i);
 });
@@ -104,9 +154,8 @@ test("createWorkflowTool schema exposes concurrency and agentRetries", () => {
   assert.match(parameters.properties?.agentRetries?.description ?? "", /Retry attempts/i);
 });
 
-test("createWorkflowTool promptGuidelines mention retry and concurrency controls", () => {
-  const tool = createWorkflowTool();
-  const all = tool.promptGuidelines.join(" ");
+test("workflowHowToGuidelines mention retry and concurrency controls", () => {
+  const all = workflowHowToGuidelines().join(" ");
 
   assert.match(all, /low concurrency/i);
   assert.match(all, /agentRetries/i);

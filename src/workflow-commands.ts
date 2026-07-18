@@ -164,11 +164,14 @@ export function registerWorkflowCommands(
 
           const effort = opts.effort;
           const extra = effort && effort.level !== "off" ? effortDirective(effort.level) : undefined;
-          const forced = buildForcedWorkflowPrompt(prompt, extra);
-          ctx.ui.notify(`Forcing workflow: ${prompt.slice(0, 60)}${prompt.length > 60 ? "…" : ""}`, "info");
+          // `/workflows run` is an explicit, maximal-intent command — use the
+          // forcing directive (no "if it's a question just answer" escape),
+          // distinct from the heuristic keyword/effort arming.
+          const armed = buildForcedWorkflowPrompt(prompt, extra);
+          ctx.ui.notify(`Running workflow: ${prompt.slice(0, 60)}${prompt.length > 60 ? "…" : ""}`, "info");
           try {
             await pi.sendMessage(
-              { customType: "workflow-run", content: forced, display: true },
+              { customType: "workflow-run", content: armed, display: true },
               { triggerTurn: true, deliverAs: "followUp" },
             );
           } catch {
