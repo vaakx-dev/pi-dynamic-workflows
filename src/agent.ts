@@ -6,6 +6,7 @@ import {
   type CreateAgentSessionOptions,
   createAgentSession,
   createCodingTools,
+  DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
   ModelRuntime,
@@ -652,7 +653,24 @@ export class WorkflowAgent {
     // per-call runCwd: agents working in short-lived git worktrees should still
     // group under the project's session dir instead of scattering across
     // temporary worktree paths.
-    const sessionManager = this.createSessionManager();
+    const sessionManager = this.sessionOptions.sessionManager ?? this.createSessionManager();
+    // A workflow subagent is a worker session, not another interactive Pi host.
+    // In particular, loading the host's global extension set here makes every
+    // subagent run unrelated interactive hooks (for example 00-template-vars)
+    // with a context that the SDK does not provide. Keep Pi's resource loading
+    // semantics for skills, prompt templates, and context files, while excluding
+    // discovered extensions. Callers that deliberately provide a resourceLoader
+    // retain full control, including explicitly requested extensions.
+    const settingsManager = this.sessionOptions.settingsManager ?? SettingsManager.create(this.cwd, agentDir);
+    const resourceLoader =
+      this.sessionOptions.resourceLoader ??
+      new DefaultResourceLoader({
+        cwd: runCwd,
+        agentDir,
+        settingsManager,
+        noExtensions: true,
+      });
+    if (!this.sessionOptions.resourceLoader) await resourceLoader.reload();
     const { session } = await createAgentSession({
       cwd: runCwd,
       agentDir,
@@ -661,7 +679,8 @@ export class WorkflowAgent {
       // SettingsManager.inMemory() doesn't load ~/.pi/settings.json, so subagents
       // would fall back to the first available model (e.g. openai-codex) which may
       // not have valid auth, causing silent empty responses.
-      settingsManager: SettingsManager.create(this.cwd, agentDir),
+      settingsManager,
+      resourceLoader,
       customTools,
       // Share the resolved registry's ModelRuntime (catalog + auth, including
       // extension-registered providers) with the subagent session. pi >= 0.80.8

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, ModelRegistry, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { AgentRunOptions, AgentUsage } from "../src/agent.js";
 import { listAvailableModelSpecs, resolveAgentModelSpec, usageFromStats, WorkflowAgent } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
@@ -103,6 +103,78 @@ test("listAvailableModelSpecs entries have provider/model format when non-empty"
     const [provider, id] = spec.split("/");
     assert.ok(provider.length > 0, "provider should not be empty");
     assert.ok(id.length > 0, "model id should not be empty");
+  }
+});
+
+test("WorkflowAgent excludes discovered host extensions but honors an explicit resource loader", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pi-dw-subagent-extensions-home-"));
+  const cwd = mkdtempSync(join(tmpdir(), "pi-dw-subagent-extensions-cwd-"));
+  const marker = join(cwd, "host-extension-loaded");
+  const core = createFauxCore({
+    provider: "fauxtest",
+    models: [{ id: "faux-model", name: "Faux Model", contextWindow: 128000, maxTokens: 4096 }],
+  });
+  try {
+    await withFakeHomeAsync(home, async () => {
+      const hostExtensionDir = join(home, ".pi", "agent", "extensions", "00-template-vars");
+      mkdirSync(hostExtensionDir, { recursive: true });
+      writeFileSync(
+        join(hostExtensionDir, "index.ts"),
+        `import { writeFileSync } from "node:fs"; export default function (pi) { pi.on("before_agent_start", () => { writeFileSync(${JSON.stringify(marker)}, "loaded"); throw new Error("host extension should not run"); }); }`,
+      );
+
+      const runtime = await ModelRuntime.create({ authPath: join(home, "auth.json"), modelsPath: null });
+      runtime.registerProvider("fauxtest", {
+        name: "Faux Test",
+        baseUrl: "http://127.0.0.1:9/faux",
+        apiKey: "faux-dummy-key-not-used",
+        api: core.api,
+        streamSimple: core.streamSimple as never,
+        models: core.models.map((m) => ({
+          id: m.id,
+          name: m.name ?? m.id,
+          reasoning: false,
+          input: ["text"] as ("text" | "image")[],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: m.contextWindow ?? 128000,
+          maxTokens: m.maxTokens ?? 4096,
+        })),
+      });
+      const registry = new ModelRegistry(runtime);
+
+      core.setResponses([fauxAssistantMessage("default loader stayed isolated", { stopReason: "stop" })]);
+      const isolated = new WorkflowAgent({ cwd, modelRegistry: registry });
+      assert.equal(
+        await isolated.run("probe default subagent resources", { model: "fauxtest/faux-model" }),
+        "default loader stayed isolated",
+      );
+      assert.equal(existsSync(marker), false, "global host extensions must not run in a default subagent");
+
+      const explicitLoader = new DefaultResourceLoader({
+        cwd,
+        agentDir: home,
+        settingsManager: SettingsManager.create(cwd, home),
+        extensionFactories: [
+          (pi) => {
+            pi.on("before_agent_start", () => {
+              writeFileSync(marker, "explicit");
+            });
+          },
+        ],
+        noExtensions: true,
+      });
+      await explicitLoader.reload();
+      core.setResponses([fauxAssistantMessage("explicit loader remained supported", { stopReason: "stop" })]);
+      const explicit = new WorkflowAgent({ cwd, modelRegistry: registry, session: { resourceLoader: explicitLoader } });
+      assert.equal(
+        await explicit.run("probe explicit subagent resources", { model: "fauxtest/faux-model" }),
+        "explicit loader remained supported",
+      );
+      assert.equal(readFileSync(marker, "utf8"), "explicit");
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
   }
 });
 
