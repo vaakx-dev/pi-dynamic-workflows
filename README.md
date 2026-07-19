@@ -120,8 +120,7 @@ Pi can manage background runs directly with the `workflow_control` tool instead 
 | `/workflows save <name>` | Save the latest script as a reusable command |
 | `/workflows-trigger off\|on\|status` | Control automatic keyword triggering |
 | `/workflows-trigger set <word>\|reset` | Set or reset the trigger word |
-| `/workflows-progress compact\|detailed\|status` | Choose the live-panel detail level, including fresh/cache token splits |
-| `/workflows-progress-max <N>` | Limit agents shown per phase in detailed mode |
+| `/workflows-progress compact\|detailed\|status\|max <N>` | Live-panel detail level (and max agents shown per phase in detailed mode) |
 | `/workflows-models` | Map model tiers and thinking levels |
 | `/ultracode [off]` | Toggle exhaustive automatic workflows |
 | `/effort off\|high\|ultra` | Set the standing orchestration effort |

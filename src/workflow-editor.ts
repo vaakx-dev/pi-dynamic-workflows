@@ -237,9 +237,9 @@ export function registerWorkflowTriggerCommand(
 }
 
 /**
- * Register the bottom progress-panel preference commands:
+ * Register the bottom progress-panel preference command:
  *  - `/workflows-progress compact|detailed|status` — switch (or report) the panel mode.
- *  - `/workflows-progress-max <1-1000>` — cap agents shown per phase in detailed mode.
+ *  - `/workflows-progress max <1-1000>` — cap agents shown per phase in detailed mode.
  * Both persist via `settingsStore` and take effect on the next live run (the panel
  * live-reads its settings), so no session restart is needed.
  */
@@ -248,47 +248,48 @@ export function registerWorkflowProgressCommands(
   settingsStore: WorkflowSettingsStore = DEFAULT_SETTINGS_STORE,
 ): void {
   pi.registerCommand?.("workflows-progress", {
-    description: "Bottom progress panel: compact | detailed | status",
+    description: "Bottom progress panel: compact | detailed | status | max <N>",
     async handler(args: string, _ctx: ExtensionCommandContext) {
-      const arg = args.trim().toLowerCase();
+      const trimmed = args.trim();
       const say = (content: string) => pi.sendMessage({ customType: "workflows-progress", content, display: true });
-      if (arg === "compact" || arg === "detailed") {
-        const saved = persistProgressSettings(settingsStore, { progressPanelMode: arg });
+      const spaceIdx = trimmed.indexOf(" ");
+      const verb = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase();
+      const rest = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+
+      if (verb === "compact" || verb === "detailed") {
+        const saved = persistProgressSettings(settingsStore, { progressPanelMode: verb });
         await say(
           saved
-            ? `Workflow progress panel set to ${arg} — takes effect on the next render of a live run (no restart needed).`
-            : `Workflow progress panel set to ${arg} for this session, but the preference could not be saved.`,
+            ? `Workflow progress panel set to ${verb} — takes effect on the next render of a live run (no restart needed).`
+            : `Workflow progress panel set to ${verb} for this session, but the preference could not be saved.`,
         );
         return;
       }
-      await say(
-        `Workflow progress panel is ${loadProgressMode(settingsStore)}. Usage: /workflows-progress compact | detailed | status`,
-      );
-    },
-  });
 
-  pi.registerCommand?.("workflows-progress-max", {
-    description: "Max agents shown per phase in detailed progress mode (1-1000)",
-    async handler(args: string, _ctx: ExtensionCommandContext) {
-      const arg = args.trim();
-      const say = (content: string) => pi.sendMessage({ customType: "workflows-progress", content, display: true });
-      if (!arg) {
+      if (verb === "max") {
+        if (!rest) {
+          await say(
+            `Detailed progress shows up to ${loadProgressMaxAgents(settingsStore)} agents per phase. Usage: /workflows-progress max <1-1000>`,
+          );
+          return;
+        }
+        const n = Number.parseInt(rest, 10);
+        if (!Number.isFinite(n) || n < 1) {
+          await say(`Invalid value "${rest}". Usage: /workflows-progress max <1-1000> (a whole number ≥ 1).`);
+          return;
+        }
+        const clamped = Math.min(1000, n);
+        const saved = persistProgressSettings(settingsStore, { progressPanelMaxAgents: clamped });
         await say(
-          `Detailed progress shows up to ${loadProgressMaxAgents(settingsStore)} agents per phase. Usage: /workflows-progress-max <1-1000>`,
+          saved
+            ? `Detailed progress now shows up to ${clamped} agents per phase.`
+            : `Set to ${clamped} for this session, but the preference could not be saved.`,
         );
         return;
       }
-      const n = Number.parseInt(arg, 10);
-      if (!Number.isFinite(n) || n < 1) {
-        await say(`Invalid value "${arg}". Usage: /workflows-progress-max <1-1000> (a whole number ≥ 1).`);
-        return;
-      }
-      const clamped = Math.min(1000, n);
-      const saved = persistProgressSettings(settingsStore, { progressPanelMaxAgents: clamped });
+
       await say(
-        saved
-          ? `Detailed progress now shows up to ${clamped} agents per phase.`
-          : `Set to ${clamped} for this session, but the preference could not be saved.`,
+        `Workflow progress panel is ${loadProgressMode(settingsStore)}, showing up to ${loadProgressMaxAgents(settingsStore)} agents per phase. Usage: /workflows-progress compact | detailed | status | max <N>`,
       );
     },
   });
