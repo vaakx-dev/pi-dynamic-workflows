@@ -234,7 +234,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     //
     // CAVEAT: the off-keyword natural-language path only sees this description if
     // the host keeps the `workflow` tool in its default active tool set. The
-    // arming paths add the tool on arm (installWorkflowEditor's setActiveTools),
+    // arming paths add the tool on arm (installWorkflowKeywordArming's setActiveTools),
     // but a bare natural-language opt-in with no arm relies on the tool already
     // being active in the host's config — keep `workflow` default-active so the
     // gate line's "fan this out" promise (mechanics available) holds.
