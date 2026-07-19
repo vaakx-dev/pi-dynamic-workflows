@@ -915,7 +915,17 @@ describe("registerWorkflowProgressCommands", () => {
     return { commands, sent, settingsStore, getSettings: () => settings, pi };
   }
 
-  it("persists a valid mode and reports the current one on status", async () => {
+  it("registers a single merged /workflows-progress command (no separate -max command)", async () => {
+    const mod = await load();
+    const { commands, settingsStore, pi } = setup();
+    mod.registerWorkflowProgressCommands(pi, settingsStore);
+
+    assert.ok(commands.get("workflows-progress"), "registers /workflows-progress");
+    assert.equal(commands.get("workflows-progress-max"), undefined, "no separate /workflows-progress-max command");
+    assert.equal(commands.size, 1, "only one command is registered");
+  });
+
+  it("persists a valid mode and reports both mode and max on status", async () => {
     const mod = await load();
     const { commands, sent, settingsStore, getSettings, pi } = setup();
     mod.registerWorkflowProgressCommands(pi, settingsStore);
@@ -927,11 +937,20 @@ describe("registerWorkflowProgressCommands", () => {
     assert.deepEqual(getSettings(), { progressPanelMode: "detailed" });
     assert.match(sent.at(-1)?.content ?? "", /detailed/i);
 
+    await cmd.handler("compact", {});
+    assert.deepEqual(getSettings(), { progressPanelMode: "compact" });
+    assert.match(sent.at(-1)?.content ?? "", /compact/i);
+
     await cmd.handler("status", {});
-    assert.match(sent.at(-1)?.content ?? "", /panel is detailed/i);
+    assert.match(sent.at(-1)?.content ?? "", /panel is compact/i);
+    assert.match(sent.at(-1)?.content ?? "", /up to \d+ agents per phase/i);
+
+    await cmd.handler("", {});
+    assert.match(sent.at(-1)?.content ?? "", /panel is compact/i);
+    assert.match(sent.at(-1)?.content ?? "", /Usage: \/workflows-progress compact \| detailed \| status \| max <N>/);
   });
 
-  it("ignores an invalid mode without persisting", async () => {
+  it("ignores an invalid/unrecognized subverb without persisting, reporting current status", async () => {
     const mod = await load();
     const { commands, sent, settingsStore, getSettings, pi } = setup();
     mod.registerWorkflowProgressCommands(pi, settingsStore);
@@ -941,22 +960,56 @@ describe("registerWorkflowProgressCommands", () => {
     assert.match(sent.at(-1)?.content ?? "", /Usage:/);
   });
 
-  it("clamps and persists the per-phase agent cap, rejecting non-numbers", async () => {
+  it("max <N> clamps and persists the per-phase agent cap, rejecting non-numbers", async () => {
     const mod = await load();
     const { commands, sent, settingsStore, getSettings, pi } = setup();
     mod.registerWorkflowProgressCommands(pi, settingsStore);
 
-    const cmd = commands.get("workflows-progress-max");
-    assert.ok(cmd, "registers /workflows-progress-max");
+    const cmd = commands.get("workflows-progress");
+    assert.ok(cmd, "registers /workflows-progress");
 
-    await cmd.handler("5000", {});
+    await cmd.handler("max 12", {});
+    assert.deepEqual(getSettings(), { progressPanelMaxAgents: 12 });
+    assert.match(sent.at(-1)?.content ?? "", /up to 12 agents per phase/);
+
+    await cmd.handler("max 5000", {});
     assert.deepEqual(getSettings(), { progressPanelMaxAgents: 1000 }, "clamps to 1000");
 
-    await cmd.handler("abc", {});
+    await cmd.handler("max abc", {});
     assert.match(sent.at(-1)?.content ?? "", /Invalid value/);
     assert.deepEqual(getSettings(), { progressPanelMaxAgents: 1000 }, "invalid value does not overwrite");
 
-    await cmd.handler("0", {});
+    await cmd.handler("max 0", {});
     assert.match(sent.at(-1)?.content ?? "", /Invalid value/);
+    assert.deepEqual(getSettings(), { progressPanelMaxAgents: 1000 }, "invalid value does not overwrite");
+  });
+
+  it("max with no number reports the current max and usage", async () => {
+    const mod = await load();
+    const { commands, sent, settingsStore, pi } = setup();
+    mod.registerWorkflowProgressCommands(pi, settingsStore);
+
+    const cmd = commands.get("workflows-progress");
+    assert.ok(cmd, "registers /workflows-progress");
+
+    await cmd.handler("max", {});
+    assert.match(sent.at(-1)?.content ?? "", /shows up to \d+ agents per phase/);
+    assert.match(sent.at(-1)?.content ?? "", /Usage: \/workflows-progress max <1-1000>/);
+  });
+
+  it("is case-insensitive for subverbs", async () => {
+    const mod = await load();
+    const { commands, sent, settingsStore, getSettings, pi } = setup();
+    mod.registerWorkflowProgressCommands(pi, settingsStore);
+
+    const cmd = commands.get("workflows-progress");
+    assert.ok(cmd, "registers /workflows-progress");
+
+    await cmd.handler("DETAILED", {});
+    assert.deepEqual(getSettings(), { progressPanelMode: "detailed" });
+
+    await cmd.handler("MAX 7", {});
+    assert.deepEqual(getSettings(), { progressPanelMode: "detailed", progressPanelMaxAgents: 7 });
+    assert.match(sent.at(-1)?.content ?? "", /up to 7 agents per phase/);
   });
 });
