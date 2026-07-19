@@ -3,11 +3,15 @@ import type { AgentUsage } from "./agent.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import type { WorkflowErrorCode } from "./errors.js";
 import type { WorkflowMeta } from "./workflow.js";
+import type { NormalizedAgentActivity } from "./workflow-telemetry.js";
 
 export type WorkflowAgentStatus = "queued" | "running" | "done" | "error" | "skipped";
 
 export interface WorkflowAgentSnapshot {
   id: number;
+  /** Stable runtime identity; labels are presentation only and may duplicate. */
+  callId?: string;
+  callIndex?: number;
   label: string;
   phase?: string;
   prompt: string;
@@ -23,6 +27,15 @@ export interface WorkflowAgentSnapshot {
   tokenUsage?: AgentUsage;
   /** The model this agent ran on (provider/id), when known. */
   model?: string;
+  agentType?: string;
+  role?: string;
+  attempt?: number;
+  provenance?: "live" | "cached";
+  startedAt?: string;
+  endedAt?: string;
+  activity?: NormalizedAgentActivity;
+  activityHistory?: NormalizedAgentActivity[];
+  tokenUsageQuality?: "reported" | "estimate" | "unknown";
 }
 
 export interface WorkflowSnapshot {
@@ -47,6 +60,10 @@ export interface WorkflowSnapshot {
     cacheWrite?: number;
   };
   runId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  queuedCount?: number;
+  skippedCount?: number;
 }
 
 export interface WorkflowDisplay {
@@ -155,7 +172,17 @@ export function recomputeWorkflowSnapshot(snapshot: WorkflowSnapshot): WorkflowS
   const runningCount = snapshot.agents.filter((agent) => agent.status === "running").length;
   const doneCount = snapshot.agents.filter((agent) => agent.status === "done").length;
   const errorCount = snapshot.agents.filter((agent) => agent.status === "error").length;
-  return { ...snapshot, agentCount: snapshot.agents.length, runningCount, doneCount, errorCount };
+  const queuedCount = snapshot.agents.filter((agent) => agent.status === "queued").length;
+  const skippedCount = snapshot.agents.filter((agent) => agent.status === "skipped").length;
+  return {
+    ...snapshot,
+    agentCount: snapshot.agents.length,
+    runningCount,
+    doneCount,
+    errorCount,
+    queuedCount,
+    skippedCount,
+  };
 }
 
 export function createWidgetWorkflowDisplay(

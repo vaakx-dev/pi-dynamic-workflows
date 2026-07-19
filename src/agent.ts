@@ -28,6 +28,12 @@ import {
   resolveTierModel,
 } from "./model-tier-config.js";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
+import {
+  type AgentActivityEvent,
+  type NormalizedAgentActivity,
+  normalizeAgentActivity,
+  safeHistoryEntry,
+} from "./workflow-telemetry.js";
 
 /**
  * Find a JSON object/array in free-form text: a fenced ```json block if present,
@@ -431,6 +437,8 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   onModelFallback?: (requestedSpec: string) => void;
   /** Called with a compact snapshot of this subagent's message/tool history. */
   onHistory?: (history: AgentHistoryEntry[]) => void;
+  /** Safe normalized SDK activity; streamed text and complete arguments never leave this class. */
+  onActivity?: (activity: NormalizedAgentActivity) => void;
   /** Run this agent in a different working directory (e.g. an isolated worktree). */
   cwd?: string;
   /**
@@ -705,7 +713,10 @@ export class WorkflowAgent {
     let removeAbortListener: (() => void) | undefined;
     let removeHistoryListener: (() => void) | undefined;
     let lastHistoryEmit = 0;
-    const emitHistory = () => options.onHistory?.(compactAgentHistory(session.messages));
+    const emitHistory = () =>
+      options.onHistory?.(
+        compactAgentHistory(session.messages).map((entry) => safeHistoryEntry(entry)) as AgentHistoryEntry[],
+      );
     const maybeEmitHistory = () => {
       if (!options.onHistory) return;
       const now = Date.now();
@@ -720,8 +731,14 @@ export class WorkflowAgent {
         options.signal.addEventListener("abort", onAbort, { once: true });
         removeAbortListener = () => options.signal?.removeEventListener("abort", onAbort);
       }
-      if (options.onHistory) {
-        removeHistoryListener = session.subscribe(() => maybeEmitHistory());
+      if (options.onHistory || options.onActivity) {
+        removeHistoryListener = session.subscribe((event) => {
+          if (options.onHistory) maybeEmitHistory();
+          if (options.onActivity) {
+            const activity = normalizeAgentActivity(event as unknown as AgentActivityEvent);
+            if (activity) options.onActivity(activity);
+          }
+        });
       }
 
       await session.prompt(this.buildPrompt(prompt, options as AgentRunOptions<any>, Boolean(options.schema)));

@@ -5,7 +5,7 @@
 import { EventEmitter } from "node:events";
 import type { ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { WorkflowAgent } from "./agent.js";
-import { preview, type WorkflowSnapshot } from "./display.js";
+import { preview, recomputeWorkflowSnapshot, type WorkflowSnapshot } from "./display.js";
 import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 import {
   createRunPersistence,
@@ -25,6 +25,7 @@ export interface ManagedRun {
   error?: WorkflowError;
   controller: AbortController;
   startedAt: Date;
+  endedAt?: Date;
   /** The real script, kept so the run can be resumed. */
   script: string;
   args?: unknown;
@@ -268,6 +269,8 @@ export class WorkflowManager extends EventEmitter {
         runningCount: 0,
         doneCount: 0,
         errorCount: 0,
+        queuedCount: 0,
+        skippedCount: 0,
       },
       controller,
       startedAt: new Date(),
@@ -284,6 +287,7 @@ export class WorkflowManager extends EventEmitter {
       agentTimestamps: new Map(),
     };
 
+    managed.snapshot.startedAt = managed.startedAt.toISOString();
     this.runs.set(runId, managed);
 
     try {
@@ -335,6 +339,7 @@ export class WorkflowManager extends EventEmitter {
     managed.autoResume = exec.autoResume;
     managed.tokenBudget = exec.tokenBudget !== undefined ? exec.tokenBudget : this.defaultTokenBudget;
     managed.toolset = exec.toolset;
+    managed.snapshot.startedAt = managed.startedAt.toISOString();
     this.runs.set(managed.runId, managed);
     // Persist the initial state immediately so listRuns()/the task panel can see
     // the run the moment it starts, not only after the first agent journals.
@@ -366,6 +371,8 @@ export class WorkflowManager extends EventEmitter {
         runningCount: 0,
         doneCount: 0,
         errorCount: 0,
+        queuedCount: 0,
+        skippedCount: 0,
       },
       controller: new AbortController(),
       startedAt: new Date(),
@@ -407,7 +414,10 @@ export class WorkflowManager extends EventEmitter {
     // toolset tag (how a resumed /deep-research keeps its web tools); else the
     // agent layer's default coding tools.
     const resolvedTools = tools ?? (managed.toolset ? this.toolsets?.[managed.toolset]?.() : undefined);
-    const progress = () => onProgress?.(managed.snapshot);
+    const progress = () => {
+      managed.snapshot = recomputeWorkflowSnapshot(managed.snapshot);
+      onProgress?.(managed.snapshot);
+    };
     // Let a host abort (e.g. Esc during a blocking tool call) cancel this run.
     if (externalSignal) {
       if (externalSignal.aborted) managed.controller.abort();
@@ -460,39 +470,74 @@ export class WorkflowManager extends EventEmitter {
           this.emit("phase", { runId: managed.runId, title });
           progress();
         },
-        onAgentStart: (event) => {
+        onAgentQueued: (event) => {
+          if (managed.snapshot.agents.some((a) => a.callId === event.callId)) return;
           const id = managed.snapshot.agents.length + 1;
           managed.snapshot.agents.push({
             id,
+            callId: event.callId,
+            callIndex: event.callIndex,
             label: event.label,
             phase: event.phase,
             prompt: event.prompt,
-            status: "running",
+            status: "queued",
             model: event.model,
+            agentType: event.agentType,
+            role: event.role,
+            provenance: "live",
           });
-          // Real per-agent start time, captured the moment the agent actually
-          // starts (not the run's startedAt) — see agentTimestamps.
-          managed.agentTimestamps.set(id, { startedAt: new Date().toISOString() });
+          managed.snapshot.queuedCount = managed.snapshot.agents.filter((a) => a.status === "queued").length;
+          this.schedulePersist(managed);
+          progress();
+        },
+        onAgentStart: (event) => {
+          const agent = managed.snapshot.agents.find((a) => a.callId === event.callId);
+          if (!agent) return;
+          agent.status = "running";
+          agent.attempt = event.attempt;
+          agent.startedAt = new Date().toISOString();
+          agent.model = event.model ?? agent.model;
+          managed.snapshot.queuedCount = managed.snapshot.agents.filter((a) => a.status === "queued").length;
+          managed.agentTimestamps.set(agent.id, { startedAt: agent.startedAt });
           this.emit("agentStart", { runId: managed.runId, ...event });
+          this.schedulePersist(managed);
+          progress();
+        },
+        onAgentAttempt: (event) => {
+          const agent = managed.snapshot.agents.find((a) => a.callId === event.callId);
+          if (agent) agent.attempt = event.attempt;
+          progress();
+        },
+        onAgentActivity: (event) => {
+          const agent = managed.snapshot.agents.find((a) => a.callId === event.callId);
+          if (!agent) return;
+          agent.activity = event.activity;
+          agent.activityHistory = [...(agent.activityHistory ?? []), event.activity].slice(-8);
+          this.emit("agentActivity", { runId: managed.runId, ...event });
+          this.schedulePersist(managed);
           progress();
         },
         onAgentEnd: (event) => {
-          const agent = [...managed.snapshot.agents]
-            .reverse()
-            .find((a) => a.label === event.label && a.status === "running");
+          const agent = managed.snapshot.agents.find((a) => a.callId === event.callId);
           if (agent) {
-            agent.status = event.result === null ? "error" : "done";
+            agent.status = event.skipped ? "skipped" : event.result === null ? "error" : "done";
+            agent.provenance = event.cached ? "cached" : "live";
+            agent.attempt = event.attempt ?? agent.attempt;
+            agent.endedAt = event.cached ? agent.endedAt : new Date().toISOString();
             agent.resultPreview = preview(event.result);
             agent.error = event.error;
             agent.errorCode = event.errorCode;
             agent.recoverable = event.recoverable;
             agent.tokens = event.tokens;
+            agent.tokenUsageQuality = event.tokenUsage ? "reported" : event.tokens ? "estimate" : "unknown";
             if (event.tokenUsage) agent.tokenUsage = event.tokenUsage;
             if (event.model) agent.model = event.model;
             // Real per-agent end time — only terminal agents get one; a still-
             // running agent's entry keeps endedAt undefined.
             const ts = managed.agentTimestamps.get(agent.id);
-            if (ts) ts.endedAt = new Date().toISOString();
+            if (ts && agent.endedAt) ts.endedAt = agent.endedAt;
+            managed.snapshot.queuedCount = managed.snapshot.agents.filter((a) => a.status === "queued").length;
+            managed.snapshot.skippedCount = managed.snapshot.agents.filter((a) => a.status === "skipped").length;
           }
           this.emit("agentEnd", { runId: managed.runId, ...event });
           progress();
@@ -515,6 +560,8 @@ export class WorkflowManager extends EventEmitter {
       });
 
       managed.status = "completed";
+      managed.endedAt = new Date();
+      managed.snapshot.endedAt = managed.endedAt.toISOString();
       managed.result = result;
       this.emit("complete", { runId: managed.runId, result });
 
@@ -534,6 +581,13 @@ export class WorkflowManager extends EventEmitter {
             );
 
       const usageLimitPaused = !managed.controller.signal.aborted && isProviderUsageLimit(workflowError);
+      // Calls reserved before the limiter but never started are not left looking
+      // live after an abort/failure. Their skipped state is canonical telemetry.
+      for (const agent of managed.snapshot.agents) {
+        if (agent.status === "queued") agent.status = "skipped";
+      }
+      managed.snapshot.queuedCount = 0;
+      managed.snapshot.skippedCount = managed.snapshot.agents.filter((a) => a.status === "skipped").length;
       if (managed.controller.signal.aborted) {
         // Intentional abort (pause/stop/Esc) — preserve status set by pause()/stop()
         if (managed.status === "running") {
@@ -654,12 +708,15 @@ export class WorkflowManager extends EventEmitter {
           const ts = managed.agentTimestamps.get(a.id);
           return {
             ...a,
-            startedAt: ts?.startedAt,
-            endedAt: ts?.endedAt,
+            startedAt: ts?.startedAt ?? a.startedAt,
+            endedAt: ts?.endedAt ?? a.endedAt,
           };
         }),
         logs: managed.snapshot.logs,
         result: managed.result?.result,
+        endedAt: managed.endedAt?.toISOString(),
+        queuedCount: managed.snapshot.agents.filter((a) => a.status === "queued").length,
+        skippedCount: managed.snapshot.agents.filter((a) => a.status === "skipped").length,
         tokenUsage: managed.snapshot.tokenUsage
           ? {
               input: managed.snapshot.tokenUsage.input,
@@ -672,7 +729,7 @@ export class WorkflowManager extends EventEmitter {
           : undefined,
         startedAt: managed.startedAt.toISOString(),
         updatedAt: new Date().toISOString(),
-        completedAt: managed.status === "completed" ? new Date().toISOString() : undefined,
+        completedAt: managed.endedAt?.toISOString(),
         durationMs: managed.result?.durationMs,
       });
     } catch (err) {
@@ -736,14 +793,21 @@ export class WorkflowManager extends EventEmitter {
         name: persisted.workflowName,
         phases: persisted.phases ?? [],
         logs: persisted.logs ?? [],
-        agents: [],
-        agentCount: 0,
-        runningCount: 0,
-        doneCount: 0,
-        errorCount: 0,
+        agents: persisted.agents.map((a, index) => ({
+          ...a,
+          callIndex: a.callIndex ?? index,
+          callId: a.callId ?? `${runId}:agent:${a.callIndex ?? index}`,
+          resultPreview: a.result == null ? undefined : preview(a.result),
+        })),
+        agentCount: persisted.agents.length,
+        runningCount: persisted.agents.filter((a) => a.status === "running").length,
+        doneCount: persisted.agents.filter((a) => a.status === "done").length,
+        errorCount: persisted.agents.filter((a) => a.status === "error").length,
+        queuedCount: persisted.agents.filter((a) => a.status === "queued").length,
+        skippedCount: 0,
       },
       controller,
-      startedAt: new Date(),
+      startedAt: new Date(persisted.startedAt),
       // The (possibly edited) script + args become the run's own — persistRun()
       // writes them below, so a later resume of this run sees the edited script.
       script,
@@ -765,6 +829,7 @@ export class WorkflowManager extends EventEmitter {
       // above); the journal, not this map, is what makes replayed agents cheap.
       agentTimestamps: new Map(),
     };
+    managed.snapshot.startedAt = managed.startedAt.toISOString();
     this.runs.set(runId, managed);
     // Persist before notifying renderers: listRuns() is their source of truth for
     // lifecycle status, while getRun() supplies the live in-memory snapshot.

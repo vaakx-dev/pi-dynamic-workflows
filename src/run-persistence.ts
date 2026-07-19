@@ -8,11 +8,14 @@ import type { AgentUsage } from "./agent.js";
 import type { AgentHistoryEntry } from "./agent-history.js";
 import type { WorkflowErrorCode } from "./errors.js";
 import { workflowProjectPaths } from "./workflow-paths.js";
+import type { NormalizedAgentActivity } from "./workflow-telemetry.js";
 
 export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted";
 
 export interface PersistedAgentState {
   id: number;
+  callId?: string;
+  callIndex?: number;
   label: string;
   phase?: string;
   prompt: string;
@@ -30,6 +33,13 @@ export interface PersistedAgentState {
   tokenUsage?: AgentUsage;
   /** The model this agent ran on (provider/id), when known. */
   model?: string;
+  agentType?: string;
+  role?: string;
+  attempt?: number;
+  provenance?: "live" | "cached";
+  activity?: NormalizedAgentActivity;
+  activityHistory?: NormalizedAgentActivity[];
+  tokenUsageQuality?: "reported" | "estimate" | "unknown";
 }
 
 export interface PersistedRunState {
@@ -54,6 +64,9 @@ export interface PersistedRunState {
   updatedAt: string;
   completedAt?: string;
   durationMs?: number;
+  endedAt?: string;
+  queuedCount?: number;
+  skippedCount?: number;
   tokenUsage?: {
     input: number;
     output: number;

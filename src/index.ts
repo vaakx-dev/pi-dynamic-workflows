@@ -132,6 +132,14 @@ export {
   saveWorkflowSettings,
   saveWorkflowSettingsForCwd,
 } from "./workflow-settings.js";
+export type { AgentActivityKind, NormalizedAgentActivity } from "./workflow-telemetry.js";
+export {
+  boundedActivitySummary,
+  formatActivity,
+  normalizeAgentActivity,
+  safeToolTarget,
+  summarizeTool,
+} from "./workflow-telemetry.js";
 export type { WorkflowToolInput, WorkflowToolOptions } from "./workflow-tool.js";
 export { backgroundStartedText, createWorkflowTool } from "./workflow-tool.js";
 export {

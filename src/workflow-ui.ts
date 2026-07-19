@@ -23,6 +23,7 @@ import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow } from "./saved-commands.js";
 import type { WorkflowManager } from "./workflow-manager.js";
 import type { SavedWorkflow, WorkflowStorage } from "./workflow-saved.js";
+import { formatActivity, safeHistoryEntry } from "./workflow-telemetry.js";
 
 const STATUS_ICON: Record<string, string> = {
   pending: "·",
@@ -59,6 +60,12 @@ interface RunRow {
   /** Cache-read tokens for the whole run. */
   cacheRead: number;
   cost: number;
+  active: number;
+  queued: number;
+  failed: number;
+  startedAt?: string;
+  endedAt?: string;
+  usageQuality?: "reported" | "estimate" | "unknown";
 }
 interface PhaseRow {
   title: string;
@@ -68,6 +75,9 @@ interface PhaseRow {
   fresh: number;
   /** Cache-read tokens summed across the phase's agents. */
   cacheRead: number;
+  active: number;
+  queued: number;
+  failed: number;
 }
 interface AgentRow {
   id: number;
@@ -77,6 +87,9 @@ interface AgentRow {
   tokens?: number;
   tokenUsage?: AgentUsage;
   model?: string;
+  activity?: WorkflowAgentSnapshot["activity"];
+  attempt?: number;
+  provenance?: "live" | "cached";
 }
 
 /** Short, human-friendly model label: drop the provider prefix for display. */
@@ -123,6 +136,12 @@ export class NavigatorModel {
         fresh: figures.fresh,
         cacheRead: figures.cacheRead,
         cost: usage?.cost ?? 0,
+        active: agents.filter((a) => a.status === "running").length,
+        queued: agents.filter((a) => a.status === "queued").length,
+        failed: agents.filter((a) => a.status === "error").length,
+        startedAt: live?.snapshot.startedAt ?? p.startedAt,
+        endedAt: live?.snapshot.endedAt ?? p.endedAt,
+        usageQuality: usage ? (usage.total > 0 ? "reported" : "unknown") : "unknown",
       };
     });
   }
@@ -167,6 +186,9 @@ export class NavigatorModel {
         total: agents.length,
         fresh: usage.fresh,
         cacheRead: usage.cacheRead,
+        active: agents.filter((a) => a.status === "running").length,
+        queued: agents.filter((a) => a.status === "queued").length,
+        failed: agents.filter((a) => a.status === "error").length,
       };
     });
   }
@@ -184,6 +206,9 @@ export class NavigatorModel {
         tokens: a.tokens,
         tokenUsage: a.tokenUsage,
         model: a.model,
+        activity: a.activity,
+        attempt: a.attempt,
+        provenance: a.provenance,
       }));
   }
 
@@ -209,6 +234,8 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
     logs: p.logs,
     agents: p.agents.map((a) => ({
       id: a.id,
+      callId: a.callId,
+      callIndex: a.callIndex,
       label: a.label,
       phase: a.phase,
       prompt: a.prompt,
@@ -218,10 +245,21 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
       error: a.error,
       errorCode: a.errorCode,
       recoverable: a.recoverable,
-      history: a.history,
+      history: a.history?.map(
+        (entry) => safeHistoryEntry(entry) as NonNullable<WorkflowAgentSnapshot["history"]>[number],
+      ),
       tokens: a.tokens,
       tokenUsage: a.tokenUsage,
       model: a.model,
+      agentType: a.agentType,
+      role: a.role,
+      attempt: a.attempt,
+      provenance: a.provenance,
+      startedAt: a.startedAt,
+      endedAt: a.endedAt,
+      activity: a.activity,
+      activityHistory: a.activityHistory,
+      tokenUsageQuality: a.tokenUsageQuality,
     })),
     agentCount: p.agents.length,
     runningCount: p.agents.filter((a) => a.status === "running").length,
@@ -229,6 +267,10 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
     errorCount: p.agents.filter((a) => a.status === "error").length,
     tokenUsage: p.tokenUsage ? { ...p.tokenUsage } : undefined,
     runId: p.runId,
+    startedAt: p.startedAt,
+    endedAt: p.endedAt,
+    queuedCount: p.queuedCount,
+    skippedCount: p.skippedCount,
   };
 }
 
@@ -473,6 +515,7 @@ function rightAgentRow(
 ): string {
   const dotColor = AGENT_DOT_COLOR[a.status] ?? "dim";
   const stats = fmtTokenSegment(tokenFigures(a.tokenUsage, a.tokens), compactTokens);
+  const activity = formatActivity(a.activity, a.status) ?? "";
   const model = shortModel(a.model) ?? "";
 
   // Stable 2-cell marker so columns never shift on selection: "› " | "  ".
@@ -516,6 +559,8 @@ function rightAgentRow(
   } else {
     out += " ".repeat(Math.max(0, statsStart - afterName)) + statsStyled;
   }
+  const suffix = activity ? ` · ${activity}` : a.provenance === "cached" ? " · cached" : "";
+  out += theme.fg("dim", truncateToWidth(suffix, Math.max(0, innerW - visibleWidth(out)), ELLIPSIS, false));
   return truncateToWidth(out, innerW, "", true);
 }
 
@@ -785,7 +830,10 @@ export function renderNavigator(
     runs.forEach((r, i) => {
       const icon = STATUS_ICON[r.status] ?? "?";
       const tok = fmtTokenSegment(r, pad);
-      const meta = [`${r.done}/${r.total}`, tok, r.cost > 0 ? fmtCost(r.cost) : ""].filter(Boolean).join(" · ");
+      const counts = [`${r.done}/${r.total}`, `${r.active} active`, `${r.queued} queued`, `${r.failed} failed`];
+      const meta = [`${r.done}/${r.total}`, tok, ...counts.slice(1), r.cost > 0 ? fmtCost(r.cost) : ""]
+        .filter(Boolean)
+        .join(" · ");
       lines.push(sel(i, `${icon} ${r.name}  ${dim(`${r.runId} · ${r.status} · ${meta}`)}`));
     });
     // Render saved workflows after a separator
@@ -819,7 +867,18 @@ export function renderNavigator(
     if (a) {
       const body: string[] = [];
       body.push(dim("Status: ") + (a.status ?? ""));
+      if (a.provenance) body.push(dim("Provenance: ") + a.provenance);
+      if (a.agentType || a.role) body.push(dim("Role: ") + (a.role ?? a.agentType ?? ""));
       if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
+      if (a.attempt) body.push(dim("Retry attempt: ") + String(a.attempt));
+      if (a.tokenUsageQuality) body.push(dim("Usage: ") + a.tokenUsageQuality);
+      if (a.startedAt) body.push(dim("Started: ") + a.startedAt);
+      if (a.endedAt) body.push(dim("Ended: ") + a.endedAt);
+      const activity = formatActivity(a.activity, a.status);
+      if (activity) body.push(dim("Activity: ") + activity);
+      if (a.activityHistory?.length) {
+        body.push(dim("Activity history: ") + a.activityHistory.map((x) => x.summary).join(" · "));
+      }
       if (a.error) body.push(dim("Error: ") + a.error);
       if (a.errorCode) body.push(`${dim("Error code: ")}${a.errorCode}${a.recoverable ? " (recoverable)" : ""}`);
       body.push("", dim("Prompt:"));
@@ -924,7 +983,7 @@ function footerHint(state: NavigatorState, model: NavigatorModel, theme: ThemeLi
       const itemKind = model.saved().length > 0 ? state.itemKindAt(model, state.cursor) : "run";
       parts.push("↑/↓ select", "enter open", "esc back");
       if (itemKind === "run") {
-        parts.push("p pause", "x stop", "r restart", "s save");
+        parts.push("p pause", "u resume", "x stop", "r restart", "s save");
       } else {
         parts.push("x delete");
       }
@@ -948,6 +1007,7 @@ export type NavAction =
   | { type: "back" }
   | { type: "close" }
   | { type: "pause" }
+  | { type: "resume" }
   | { type: "stop" }
   | { type: "restart" }
   | { type: "save" }
@@ -977,6 +1037,8 @@ export function keyToAction(keyId: string | undefined, kind: ViewKind, itemKind?
       return { type: "close" };
     case "p":
       return { type: "pause" };
+    case "u":
+      return { type: "resume" };
     case "x":
       if (kind === "savedDetail" || itemKind === "saved") return { type: "deleteSaved" };
       return { type: "stop" };
@@ -1068,6 +1130,14 @@ export function openWorkflowNavigator(
           case "pause": {
             const id = state.activeRunId(model);
             if (id) ui.notify(manager.pause(id) ? `Paused ${id}` : `Cannot pause ${id}`, "info");
+            break;
+          }
+          case "resume": {
+            const id = state.activeRunId(model);
+            if (id)
+              void manager
+                .resume(id)
+                .then((ok) => ui.notify(ok ? `Resumed ${id}` : `Cannot resume ${id}`, ok ? "info" : "warning"));
             break;
           }
           case "stop": {

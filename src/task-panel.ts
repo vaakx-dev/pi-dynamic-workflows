@@ -22,6 +22,7 @@ import {
 import type { ManagedRun, WorkflowManager } from "./workflow-manager.js";
 import type { WorkflowStorage } from "./workflow-saved.js";
 import type { WorkflowSettings } from "./workflow-settings.js";
+import { formatActivity } from "./workflow-telemetry.js";
 import { shortModel } from "./workflow-ui.js";
 
 // `tokenUsage` is included so the detailed panel's live token/s counter refreshes
@@ -220,28 +221,73 @@ export function installResultDelivery(
   );
 }
 
+function elapsedLabel(
+  startedAt: string | undefined,
+  endedAt: string | undefined,
+  now = Date.now(),
+): string | undefined {
+  if (!startedAt) return undefined;
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start)) return undefined;
+  const end = endedAt ? Date.parse(endedAt) : now;
+  if (!Number.isFinite(end) || end < start) return undefined;
+  const seconds = Math.floor((end - start) / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function activityText(agent: WorkflowAgentSnapshot): string | undefined {
+  return formatActivity(agent.activity, agent.status);
+}
+
 export function renderPanel(manager: WorkflowManager, theme: Theme, width?: number): string[] {
   const all = manager.listRuns();
-  const active = all.filter((r) => r.status === "running" || r.status === "paused");
-  if (!active.length) return [];
-  const rows = active.map((r) => {
-    const live = manager.getRun(r.runId);
-    const agents = live?.snapshot.agents ?? r.agents;
-    const done = agents.filter((a) => a.status === "done").length;
-    const icon = r.status === "paused" ? "⏸" : "◆";
-    const phase = live?.snapshot.currentPhase ? ` · ${live.snapshot.currentPhase}` : "";
-    return `  ${icon} ${r.workflowName}  ${done}/${agents.length} agents${phase}`;
-  });
-  // Finished runs leave this live panel but are kept in the navigator. Tell the
-  // user so a completed run doesn't look like it vanished.
-  const finished = all.filter((r) => r.status !== "running" && r.status !== "paused").length;
-  const hint = theme.fg(
-    "dim",
-    finished > 0
-      ? `  /workflows — open navigator (${finished} finished kept in history)`
-      : "  /workflows — open navigator",
+  const activeRuns = all.filter((r) => r.status === "running" || r.status === "paused");
+  if (!activeRuns.length) return [];
+  const totalActive = activeRuns.reduce(
+    (n, r) => n + (manager.getRun(r.runId)?.snapshot.agents ?? r.agents).filter((a) => a.status === "running").length,
+    0,
   );
-  return [theme.bold(`Workflows running (${active.length}):`), ...rows, hint].map((line) => fitLine(line, width));
+  const totalQueued = activeRuns.reduce(
+    (n, r) => n + (manager.getRun(r.runId)?.snapshot.agents ?? r.agents).filter((a) => a.status === "queued").length,
+    0,
+  );
+  const out: string[] = [
+    theme.bold(`Workflows running (${activeRuns.length}) · ${totalActive} active · ${totalQueued} queued`),
+  ];
+  for (const r of activeRuns) {
+    const live = manager.getRun(r.runId);
+    const snap = live?.snapshot;
+    const agents = (snap?.agents ?? r.agents) as WorkflowAgentSnapshot[];
+    const done = agents.filter((a) => a.status === "done").length;
+    const failed = agents.filter((a) => a.status === "error").length;
+    const active = agents.filter((a) => a.status === "running");
+    const queued = agents.filter((a) => a.status === "queued").length;
+    const phase = snap?.currentPhase ? ` · ${snap.currentPhase}` : "";
+    const elapsed = elapsedLabel(snap?.startedAt ?? r.startedAt, snap?.endedAt ?? r.endedAt);
+    const timing = elapsed ? ` · ${elapsed}` : "";
+    out.push(
+      `◆ ${r.workflowName ?? r.runId}${phase} · ${done}/${agents.length} done · ${agents.length} agents${timing}`,
+    );
+    // Stable call order is the canonical order; narrow terminals show one row
+    // and an explicit overflow marker rather than wrapping or scrolling.
+    const activeCap = width !== undefined && width < 50 ? 1 : 3;
+    for (const a of active.slice(0, activeCap)) {
+      const activity = activityText(a);
+      const attempt = a.attempt && a.attempt > 1 ? ` ${a.attempt}` : "";
+      out.push(`  ● ${shorten(a.label ?? "agent", 38)}${attempt}${activity ? ` · ${activity}` : ""}`);
+    }
+    if (active.length > activeCap) out.push(theme.fg("dim", `  +${active.length - activeCap} active`));
+    if (!active.length && queued) out.push(theme.fg("dim", "  queued — waiting for a concurrency slot"));
+    out.push(theme.fg("dim", `  ✓ ${done} done · ✗ ${failed} failed · ${queued} queued`));
+  }
+  const finished = all.filter((r) => r.status !== "running" && r.status !== "paused").length;
+  out.push(
+    theme.fg(
+      "dim",
+      finished > 0 ? `  /workflows for details (${finished} finished kept in history)` : "  /workflows for details",
+    ),
+  );
+  return out.map((line) => fitLine(line, width));
 }
 
 // ─── Detailed mode: live token rate ────────────────────────────────────────────
@@ -321,12 +367,14 @@ function renderRunBody(
     const running = phaseAgents.filter((a) => a.status === "running").length;
     const errors = phaseAgents.filter((a) => a.status === "error").length;
     const skipped = phaseAgents.filter((a) => a.status === "skipped").length;
+    const queued = phaseAgents.filter((a) => a.status === "queued").length;
     const complete = done + errors + skipped === phaseAgents.length;
     const marker = running > 0 || (!complete && snap.currentPhase === title) ? "▶" : complete ? "✓" : " ";
     const phaseMeta = [
       `${done}/${phaseAgents.length} agents`,
       running ? `${running} running` : "",
-      errors ? `${errors} errors` : "",
+      errors ? `${errors} failed` : "",
+      queued ? `${queued} queued` : "",
       fmtTokenSegment(aggregateAgentUsage(phaseAgents), fmtTokensShort),
     ]
       .filter(Boolean)
@@ -339,7 +387,11 @@ function renderRunBody(
       const tok = segment ? dim(` ${segment}`) : "";
       const mdl = shortModel(a.model);
       const model = mdl ? dim(` · ${mdl}`) : "";
-      lines.push(`    [${a.id}] ${statusIcon(a.status)} ${shorten(a.label, 40)}${tok}${model}`);
+      const activity = formatActivity(a.activity, a.status);
+      const state = a.provenance === "cached" ? " · cached" : "";
+      lines.push(
+        `    [${a.id}] ${statusIcon(a.status)} ${shorten(a.label, 40)}${tok}${model}${activity ? dim(` · ${activity}`) : ""}${state}`,
+      );
     }
     if (phaseAgents.length > visible.length) {
       lines.push(dim(`    … ${phaseAgents.length - visible.length} earlier agents`));
@@ -383,9 +435,18 @@ export function renderPanelDetailed(
     // tokens, so their rate is suppressed (a stalled rate would mislead).
     const runUsage = aggregateAgentUsage(agents);
     sampleTokens(r.runId, runUsage.fresh + runUsage.cacheRead, now);
-    const rate = r.status === "running" ? tokensPerSecond(r.runId) : 0;
+    const hasReportedUsage = agents.some(
+      (a) =>
+        a.tokenUsageQuality === "reported" ||
+        a.tokenUsage != null ||
+        (a.tokenUsageQuality === undefined && a.tokens != null && a.tokens > 0),
+    );
+    const rate = r.status === "running" && hasReportedUsage ? tokensPerSecond(r.runId) : 0;
     const meta = [
       `${done}/${agents.length} agents`,
+      `${agents.filter((a) => a.status === "running").length} active`,
+      `${agents.filter((a) => a.status === "queued").length} queued`,
+      `${agents.filter((a) => a.status === "error").length} failed`,
       snap?.currentPhase || "",
       fmtTokenSegment(runUsage, fmtTokensShort),
       // (cost is only known once the run finalizes its usage.)

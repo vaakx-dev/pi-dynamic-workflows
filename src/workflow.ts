@@ -19,6 +19,7 @@ import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
 import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
+import type { NormalizedAgentActivity } from "./workflow-telemetry.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
 
 /**
@@ -133,8 +134,43 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   confirm?: (promptText: string, options: CheckpointOptions) => Promise<unknown>;
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
-  onAgentStart?: (event: { label: string; phase?: string; prompt: string; model?: string }) => void;
+  onAgentQueued?: (event: {
+    callId: string;
+    callIndex: number;
+    label: string;
+    phase?: string;
+    prompt: string;
+    model?: string;
+    agentType?: string;
+    role?: string;
+  }) => void;
+  onAgentStart?: (event: {
+    callId: string;
+    callIndex: number;
+    attempt: number;
+    label: string;
+    phase?: string;
+    prompt: string;
+    model?: string;
+    agentType?: string;
+    role?: string;
+  }) => void;
+  onAgentAttempt?: (event: {
+    callId: string;
+    callIndex: number;
+    attempt: number;
+    label: string;
+    phase?: string;
+  }) => void;
+  onAgentActivity?: (event: {
+    callId: string;
+    callIndex: number;
+    label: string;
+    activity: NormalizedAgentActivity;
+  }) => void;
   onAgentEnd?: (event: {
+    callId: string;
+    callIndex: number;
     label: string;
     phase?: string;
     result: unknown;
@@ -145,6 +181,9 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     error?: string;
     errorCode?: WorkflowErrorCode;
     recoverable?: boolean;
+    attempt?: number;
+    cached?: boolean;
+    skipped?: boolean;
   }) => void;
   onAgentHistory?: (event: { label: string; phase?: string; history: AgentHistoryEntry[] }) => void;
   onTokenUsage?: (usage: {
@@ -454,6 +493,7 @@ export async function runWorkflow<T = unknown>(
     // top-level run AND per nested run, see `${runId}-nested${shared.depth}`
     // below) with callIndex makes the key unique across the whole store.
     const deltaKey = `${runId}:${callIndex}`;
+    const callId = `${runId}:agent:${callIndex}`;
 
     // Reserve the agent slot synchronously — atomic with the limit/budget gate
     // above (no await in between) — so a parallel() fan-out can't all observe the
@@ -462,6 +502,17 @@ export async function runWorkflow<T = unknown>(
     // push slightly past total, then further agent() calls throw.)
     shared.agentCount++;
     const label = requestedLabel || defaultAgentLabel(assignedPhase, shared.agentCount);
+    const queuedEvent = {
+      callId,
+      callIndex,
+      label,
+      phase: assignedPhase,
+      prompt,
+      model: displayModel,
+      agentType: agentOptions.agentType,
+      role: agentOptions.agentType,
+    };
+    options.onAgentQueued?.(queuedEvent);
 
     // Longest-unchanged-prefix resume: replay a cached result only while the
     // prefix is still intact — this call's index is before the first changed/new
@@ -472,8 +523,13 @@ export async function runWorkflow<T = unknown>(
     const hashMatches = cached != null && cached.hash === callHash;
     const cachedEmptyOutput = hashMatches && isEmptyTextAgentResult(cached.result, agentOptions.schema);
     if (hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
-      options.onAgentEnd?.({ label, phase: assignedPhase, result: cached.result, tokens: 0, model: displayModel });
+      options.onAgentEnd?.({
+        ...queuedEvent,
+        result: cached.result,
+        model: displayModel,
+        cached: true,
+        attempt: 0,
+      });
       // Apply this agent's write delta so live agents later in the run see a
       // consistent store. Additive apply preserves parallel-agent writes that
       // came from higher-callIndex agents finishing before this one.
@@ -489,7 +545,7 @@ export async function runWorkflow<T = unknown>(
       const retryAttempts = normalizeAgentRetries(agentOptions.retries ?? options.agentRetries ?? 0);
       const maxAttempts = retryAttempts + 1;
 
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt, model: displayModel });
+      options.onAgentStart?.({ ...queuedEvent, attempt: 1 });
 
       // Optional per-agent worktree isolation (deterministic name -> stable resume keys).
       // Precedence: explicit call-site isolation > agentDef isolation.
@@ -526,6 +582,20 @@ export async function runWorkflow<T = unknown>(
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           usage = undefined;
           try {
+            options.onAgentAttempt?.({ callId, callIndex, attempt, label, phase: assignedPhase });
+            if (attempt > 1) {
+              options.onAgentActivity?.({
+                callId,
+                callIndex,
+                label,
+                activity: {
+                  kind: "waiting",
+                  summary: "retrying",
+                  observedAt: new Date().toISOString(),
+                  active: true,
+                },
+              });
+            }
             throwIfAborted();
             // This agent's own fan-out already breached maxAgents while this
             // call sat queued behind the limiter; bail before spending on the
@@ -565,6 +635,9 @@ export async function runWorkflow<T = unknown>(
                 onHistory: (history: AgentHistoryEntry[]) => {
                   options.onAgentHistory?.({ label, phase: assignedPhase, history });
                 },
+                onActivity: (activity: NormalizedAgentActivity) => {
+                  options.onAgentActivity?.({ callId, callIndex, label, activity });
+                },
               }),
               timeout,
               label,
@@ -586,6 +659,8 @@ export async function runWorkflow<T = unknown>(
               storeDelta: store.commitDelta(deltaKey),
             });
             options.onAgentEnd?.({
+              callId,
+              callIndex,
               label,
               phase: assignedPhase,
               result,
@@ -610,6 +685,8 @@ export async function runWorkflow<T = unknown>(
             }
 
             options.onAgentEnd?.({
+              callId,
+              callIndex,
               label,
               phase: assignedPhase,
               result: null,
@@ -620,6 +697,7 @@ export async function runWorkflow<T = unknown>(
               error: workflowError.message,
               errorCode: workflowError.code,
               recoverable: workflowError.recoverable,
+              attempt,
             });
 
             if (workflowError.recoverable) {

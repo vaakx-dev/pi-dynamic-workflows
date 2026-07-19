@@ -109,7 +109,7 @@ export function registerWorkflowProgressCommands(
   settingsStore: WorkflowSettingsStore = DEFAULT_SETTINGS_STORE,
 ): void {
   pi.registerCommand?.("workflows-progress", {
-    description: "Bottom progress panel: compact | detailed | status | max <N>",
+    description: "Bottom workflow telemetry panel: compact | detailed | status | max <N>",
     async handler(args: string, _ctx: ExtensionCommandContext) {
       const trimmed = args.trim();
       const say = (content: string) => pi.sendMessage({ customType: "workflows-progress", content, display: true });
@@ -150,7 +150,7 @@ export function registerWorkflowProgressCommands(
       }
 
       await say(
-        `Workflow progress panel is ${loadProgressMode(settingsStore)}, showing up to ${loadProgressMaxAgents(settingsStore)} agents per phase. Usage: /workflows-progress compact | detailed | status | max <N>`,
+        `Workflow progress panel is ${loadProgressMode(settingsStore)} (active telemetry by default), showing up to ${loadProgressMaxAgents(settingsStore)} completed agents per phase in detailed mode. Usage: /workflows-progress compact | detailed | status | max <N>`,
       );
     },
   });

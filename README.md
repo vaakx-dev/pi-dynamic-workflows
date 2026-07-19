@@ -80,7 +80,7 @@ return await agent(
 - **Journaled resume** — replay completed agents after interruption without rerunning them or spending their tokens again. The orchestrator can also resume with an **edited script** (`resumeFromRunId`): unchanged `agent()` calls replay from cache and only edited/new ones re-run — so a single bad prompt no longer means paying to re-run the whole workflow.
 - **Git worktree isolation** — let parallel agents edit safely on throwaway branches with `isolation: "worktree"`.
 - **Measured usage** — report real tokens and cost from each subagent session; add run, phase, or agent budgets only when you want them.
-- **Visible background runs** — track phases, agents, models, fresh/cache tokens, cost, and live tok/s from the progress panel or `/workflows` navigator.
+- **Visible background runs** — track queued/running/done/failed agents, phases, models, safe observed activity, fresh/cache tokens with provenance, and cached replay from the progress panel or `/workflows` navigator.
 - **Quality patterns** — compose `verify()`, `judgePanel()`, `loopUntilDry()`, and `completenessCheck()` instead of rebuilding review loops.
 - **Reusable workflows** — save any run as a command and call saved workflows from other workflows.
 
@@ -118,12 +118,12 @@ Pi can manage background runs directly with the `workflow_control` tool instead 
 | `/workflows status <id>` | Watch a run and print its result when complete |
 | `/workflows pause\|resume\|stop\|rm <id>` | Control a run |
 | `/workflows save <name>` | Save the latest script as a reusable command |
-| `/workflows-progress compact\|detailed\|status\|max <N>` | Live-panel detail level (and max agents shown per phase in detailed mode) |
+| `/workflows-progress compact\|detailed\|status\|max <N>` | Live-panel detail level (active telemetry by default; max completed agents per phase in detailed mode) |
 | `/workflows-models` | Map model tiers and thinking levels |
 | `/ultracode [off]` | Toggle exhaustive automatic workflows |
 | `/effort off\|high\|ultra` | Set the standing orchestration effort |
 
-In the navigator: `↑/↓` select · `enter/→` open · `esc/←` back · `p` pause · `x` stop · `r` restart · `s` save · `q` quit.
+The live panel shows only observed activity (tool name/target, model response, waiting, or error); completed activity is marked `last:` and unavailable usage/timing is omitted. In the navigator: `↑/↓` select · `enter/→` open · `esc/←` back · `p` pause · `u` resume · `x` stop · `r` restart · `s` save · `q` quit.
 
 ## Runtime reference
 
