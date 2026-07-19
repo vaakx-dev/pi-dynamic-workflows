@@ -6,7 +6,7 @@ import {
   createWorkflowTool,
   installResultDelivery,
   installTaskPanel,
-  installWorkflowEditor,
+  installWorkflowKeywordArming,
   loadWorkflowSettings,
   registerAllSavedWorkflows,
   registerBuiltinWorkflows,
@@ -55,10 +55,10 @@ export default function extension(pi: ExtensionAPI) {
   registerBuiltinWorkflows(pi, { cwd });
   registerAllSavedWorkflows(pi, cwd, storage, manager);
   registerEffortCommand(pi, effort);
-  // "Workflows mode": type `workflow(s)` to arm a forced workflow (animated),
-  // Backspace right after the word disarms it. Registers the `input` hook now;
-  // the editor itself is installed once the UI is available (session_start).
-  let editorInstalled = false;
+  // "Workflows mode": type `workflow(s)` to arm a forced workflow at submit
+  // time. Installed once (guarded below) inside session_start alongside the
+  // other per-session installers.
+  let armingInstalled = false;
 
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
     // Tell the manager the session's main model so "explore" agents auto-tier
@@ -90,14 +90,14 @@ export default function extension(pi: ExtensionAPI) {
     // Pass a live settings loader so /workflows-progress (compact|detailed) takes
     // effect without a restart.
     installTaskPanel(pi, manager, ctx.ui, { storage, cwd, loadSettings: () => loadWorkflowSettings({ cwd }) });
-    if (!editorInstalled) {
-      installWorkflowEditor(pi, ctx.ui, effort, {
+    if (!armingInstalled) {
+      installWorkflowKeywordArming(pi, effort, {
         settingsStore: {
           load: () => loadWorkflowSettings({ cwd }),
           save: (nextSettings) => saveWorkflowSettingsForCwd(nextSettings, cwd),
         },
       });
-      editorInstalled = true;
+      armingInstalled = true;
     }
   });
 }

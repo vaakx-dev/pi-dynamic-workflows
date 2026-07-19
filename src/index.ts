@@ -106,16 +106,12 @@ export {
   type ArmReason,
   buildArmedWorkflowPrompt,
   buildForcedWorkflowPrompt,
-  colorizeWorkflow,
   endsWithTrigger,
   hasTrigger,
-  type InstallWorkflowEditorOptions,
-  installWorkflowEditor,
-  RAINBOW,
+  type InstallWorkflowKeywordArmingOptions,
+  installWorkflowKeywordArming,
   registerWorkflowProgressCommands,
   registerWorkflowTriggerCommand,
-  tokenizeAnsi,
-  WorkflowEditor,
   type WorkflowModeState,
 } from "./workflow-editor.js";
 export type { ManagedRun, WorkflowManagerOptions } from "./workflow-manager.js";

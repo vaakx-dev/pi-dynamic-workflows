@@ -191,7 +191,7 @@ Completed background runs persist their full result in the project run JSON. The
 </details>
 
 <details>
-<summary><strong>Keyword trigger and editor compatibility</strong></summary>
+<summary><strong>Keyword trigger</strong></summary>
 
 Set a literal, case-insensitive custom trigger in `~/.pi/workflows/settings.json`:
 
@@ -201,7 +201,7 @@ Set a literal, case-insensitive custom trigger in `~/.pi/workflows/settings.json
 }
 ```
 
-The default `workflow` also matches `workflows`; a custom word matches exactly. Trigger words are case-insensitive and Unicode identifier-bounded, and do not activate inside paths, slash commands, or identifier-like text. If another extension owns Pi's custom editor, the submit-time trigger still works, but animated keyword highlighting and Backspace one-shot disarm are unavailable. Editor visuals are load-order dependent.
+The default `workflow` also matches `workflows`; a custom word matches exactly. Trigger words are case-insensitive and Unicode identifier-bounded, and do not activate inside paths, slash commands, or identifier-like text. Detection is purely textual, applied at submit time to the message you send — it does not depend on, or own, Pi's editor component, so it works the same regardless of what else is installed.
 
 </details>
 
