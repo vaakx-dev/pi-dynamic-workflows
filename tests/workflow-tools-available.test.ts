@@ -388,8 +388,6 @@ describe("workflow extension - control tool availability", () => {
             sessionManager: { getSessionId: () => "session-1" },
             ui: {
               setWidget: () => {},
-              getEditorComponent: () => undefined,
-              setEditorComponent: () => {},
             },
           },
         );
