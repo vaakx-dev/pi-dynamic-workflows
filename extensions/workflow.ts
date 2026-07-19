@@ -7,7 +7,7 @@ import {
   createWorkflowTool,
   installResultDelivery,
   installTaskPanel,
-  installWorkflowKeywordArming,
+  installWorkflowInputHandling,
   loadWorkflowSettings,
   registerAllSavedWorkflows,
   registerBuiltinWorkflows,
@@ -55,18 +55,16 @@ export default function extension(pi: ExtensionAPI) {
     usageLimitScheduler.dispose();
   });
   // Standing /effort opt-in (off|high|ultra): auto-arms a workflow for substantive
-  // messages, like CC's ultracode. Shared with the editor's input hook below and
-  // with the explicit /workflows run <prompt> manual trigger.
+  // messages, like CC's ultracode. Shared with the input hook below and with the
+  // explicit /workflows run <prompt> manual trigger.
   const effort = createEffortState();
   registerWorkflowCommands(pi, manager, { storage, cwd, effort });
   registerWorkflowModelsCommand(pi);
   registerBuiltinWorkflows(pi, { cwd, manager });
   registerAllSavedWorkflows(pi, cwd, storage, manager);
   registerEffortCommand(pi, effort);
-  // "Workflows mode": type `workflow(s)` to arm a forced workflow at submit
-  // time. Installed once (guarded below) inside session_start alongside the
-  // other per-session installers.
-  let armingInstalled = false;
+  // Install the standing-effort input hook once per session.
+  let inputHandlingInstalled = false;
 
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
     // Tell the manager the session's main model so "explore" agents auto-tier
@@ -98,14 +96,14 @@ export default function extension(pi: ExtensionAPI) {
     // Pass a live settings loader so /workflows-progress (compact|detailed) takes
     // effect without a restart.
     installTaskPanel(pi, manager, ctx.ui, { storage, cwd, loadSettings: () => loadWorkflowSettings({ cwd }) });
-    if (!armingInstalled) {
-      installWorkflowKeywordArming(pi, effort, {
+    if (!inputHandlingInstalled) {
+      installWorkflowInputHandling(pi, effort, {
         settingsStore: {
           load: () => loadWorkflowSettings({ cwd }),
           save: (nextSettings) => saveWorkflowSettingsForCwd(nextSettings, cwd),
         },
       });
-      armingInstalled = true;
+      inputHandlingInstalled = true;
     }
   });
 }

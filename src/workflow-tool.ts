@@ -65,13 +65,13 @@ export function agentTypeGuideline(cwd: string = process.cwd()): string | undefi
  * `description` (see {@link createWorkflowTool}), not into this always-on line.
  *
  * The line is balanced on purpose: a task-shape positive ("this is the kind of
- * work the tool is for") so the model recognizes a good fit even when the user
- * phrases it off-keyword, PLUS the explicit-opt-in gate and the "do not call it
+ * work the tool is for") so the model recognizes a good fit when the user
+ * describes it naturally, PLUS the explicit-opt-in gate and the "do not call it
  * otherwise" negative so it doesn't self-trigger (#88). The "offer with a rough
  * cost" keeps a non-forcing path open for a task that fits but wasn't opted into.
  */
 export const WORKFLOW_GATE_GUIDELINE =
-  "The `workflow` tool runs multi-agent orchestration — it fans decomposable work out across subagents, and fits tasks shaped like: repo-wide inspection, independent parallel research/checks, multi-perspective review, or fan-out/fan-in synthesis. ONLY call it when the user explicitly opts in — via the workflow trigger word, `/workflows run`, or their own words (e.g. 'run a workflow', 'fan this out', '并行审一遍'). For any other task — even one that would clearly benefit — do not call it; you may briefly offer it (with a rough cost) as an option instead.";
+  "The `workflow` tool runs multi-agent orchestration — it fans decomposable work out across subagents, and fits tasks shaped like: repo-wide inspection, independent parallel research/checks, multi-perspective review, or fan-out/fan-in synthesis. ONLY call it when the user explicitly opts in — via `/workflows run` or their own words (e.g. 'run a workflow', 'fan this out', '并行审一遍'). For any other task — even one that would clearly benefit — do not call it; you may briefly offer it (with a rough cost) as an option instead.";
 
 /**
  * The how-to guidance for actually WRITING a workflow script. These lines are
@@ -80,12 +80,11 @@ export const WORKFLOW_GATE_GUIDELINE =
  * turn's message.
  *
  * A tool description is the right home for this "manual": it is visible to the
- * model whenever it considers or calls the tool — regardless of which path armed
- * the turn, and even on the natural-language opt-ins that the gate line blesses
- * but that never trip the literal keyword arm — and it is a static, prefix-
- * cacheable part of the tool definition rather than per-turn behavioral priming.
- * That fixes both the "armed off-keyword ⇒ no mechanics ⇒ lower-quality script"
- * gap and the ~1.4KB-per-armed-turn re-injection (worse for `/effort` users).
+ * model whenever it considers or calls the tool — regardless of whether the turn
+ * came from effort mode, an explicit command, or a natural-language opt-in — and
+ * it is a static, prefix-cacheable part of the tool definition rather than
+ * per-turn behavioral priming. This keeps the mechanics available without
+ * re-injecting them into each turn (worse for `/effort` users).
  *
  * Keeping it out of `promptGuidelines` still shrinks the always-on prompt (#88
  * self-priming) — this array is the how-to only, never the always-on gate. Note
@@ -225,16 +224,16 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     label: "Workflow",
     // The how-to "manual" lives here, in the static tool description, so the
     // model has the mechanics whenever it considers/calls the tool — on every
-    // arming path AND on off-keyword natural-language opt-ins that never trip the
-    // literal keyword arm. This is a cacheable part of the tool definition, not
+    // arming path AND on natural-language opt-ins. This is a cacheable part of the
+    // tool definition, not
     // per-turn priming (that's why it's here and not appended to the armed
-    // message; see workflowHowToGuidelines / buildArmedWorkflowPrompt). It grows
+    // message; see workflowHowToGuidelines / buildEffortWorkflowPrompt). It grows
     // the tool-DEFINITION budget; trimming the how-to itself is separate work
     // (#65 / contract-concision), not this change's job.
     //
-    // CAVEAT: the off-keyword natural-language path only sees this description if
+    // CAVEAT: a natural-language opt-in only sees this description if
     // the host keeps the `workflow` tool in its default active tool set. The
-    // arming paths add the tool on arm (installWorkflowKeywordArming's setActiveTools),
+    // effort mode adds the tool on arm (installWorkflowInputHandling's setActiveTools),
     // but a bare natural-language opt-in with no arm relies on the tool already
     // being active in the host's config — keep `workflow` default-active so the
     // gate line's "fan this out" promise (mechanics available) holds.
@@ -255,7 +254,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
     // The ~20 how-to lines that used to live here now live in the tool's static
     // `description` (see above / workflowHowToGuidelines), so the model has the
     // mechanics whenever it looks at the tool — without paying the always-on cost
-    // or the per-armed-turn re-injection.
+    // or per-turn message re-injection.
     get promptGuidelines() {
       return [WORKFLOW_GATE_GUIDELINE];
     },

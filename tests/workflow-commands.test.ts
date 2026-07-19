@@ -4,7 +4,7 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createEffortState, effortDirective } from "../src/effort-command.js";
 import { registerWorkflowCommands } from "../src/workflow-commands.js";
-import { buildForcedWorkflowPrompt, WORKFLOW_TOOL_NAME } from "../src/workflow-editor.js";
+import { buildForcedWorkflowPrompt, WORKFLOW_TOOL_NAME } from "../src/workflow-input.js";
 import type { WorkflowManager } from "../src/workflow-manager.js";
 
 type Handler = (args: string, ctx: any) => Promise<void>;
@@ -129,7 +129,7 @@ test("/workflows run <prompt> notifies error when sendMessage rejects and does n
   );
 });
 
-test("/workflows run adds the workflow tool when absent and does not depend on the keyword trigger", async () => {
+test("/workflows run adds the workflow tool when absent", async () => {
   const h = harness({}, {}, ["bash", "read"]);
   await h.run("run summarize the auth module");
   assert.deepEqual(h.activeTools, ["bash", "read", WORKFLOW_TOOL_NAME]);

@@ -1,29 +1,29 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/assets/readme/hero.png" width="100%" alt="pi-dynamic-workflows turns one prompt into a routed, resumable, cross-checked fleet of Pi subagents">
+  <img src="https://raw.githubusercontent.com/vaakx-dev/pi-dynamic-workflows/main/assets/readme/hero.png" width="100%" alt="pi-dynamic-workflows turns one prompt into a routed, resumable, cross-checked fleet of Pi subagents">
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows"><img src="https://img.shields.io/npm/v/@quintinshaw/pi-dynamic-workflows?color=cb3837&logo=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@vaakx-dev/pi-dynamic-workflows"><img src="https://img.shields.io/npm/v/@vaakx-dev/pi-dynamic-workflows?color=cb3837&logo=npm" alt="npm version"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <a href="https://pi.dev"><img src="https://img.shields.io/badge/for-Pi-7c3aed" alt="Built for Pi"></a>
 </p>
 
 <p align="center">
-  <a href="https://quintinshaw.github.io/pi-dynamic-workflows/">Documentation</a> ·
-  <a href="https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows">npm</a> ·
-  <a href="https://pi.dev/packages/@quintinshaw/pi-dynamic-workflows">Pi package</a>
+  <a href="https://vaakx-dev.github.io/pi-dynamic-workflows/">Documentation</a> ·
+  <a href="https://www.npmjs.com/package/@vaakx-dev/pi-dynamic-workflows">npm</a> ·
+  <a href="https://pi.dev/packages/@vaakx-dev/pi-dynamic-workflows">Pi package</a>
 </p>
 
 Turn one request into a JavaScript orchestration script that fans work out across isolated subagents, routes each task to the right model, cross-checks the results, and returns one synthesized answer. Intermediate work stays in script variables instead of filling your chat context.
 
 Built for **codebase-wide audits, multi-perspective review, large refactors, and source-checked research**—the jobs that are too broad for one agent and one context window.
 
-![A real pi-dynamic-workflows run showing parallel agents and live progress](https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/docs/media/demo.gif)
+![A real pi-dynamic-workflows run showing parallel agents and live progress](https://raw.githubusercontent.com/vaakx-dev/pi-dynamic-workflows/main/docs/media/demo.gif)
 
 ## Start in 30 seconds
 
 ```bash
-pi install npm:@quintinshaw/pi-dynamic-workflows
+pi install npm:@vaakx-dev/pi-dynamic-workflows
 ```
 
 Run `/reload` in Pi, then ask naturally:
@@ -34,11 +34,11 @@ Run a workflow to audit every route under src/routes/ for missing auth checks.
 
 Pi writes and starts the workflow in the background. A live panel tracks progress while you keep working, and the final result is delivered back into the conversation automatically.
 
-Keyword triggering is on by default: use the bounded word **workflow** or **workflows** in a message to arm workflow mode — the assistant then handles a request by fanning it out across agents, but still answers plainly if you're only asking *about* workflows (the trigger authorizes the tool, it doesn't force it). Or run `/workflows run <prompt>` explicitly. Identifier-like text and paths such as `myworkflow`, `workflow_name`, and `src/workflow-editor.ts` do not trigger. You can change the keyword with `/workflows-trigger set pi-workflow` or disable it with `/workflows-trigger off`.
+Ordinary messages are never rewritten based on words they contain, including **workflow** and **workflows**. To execute a workflow explicitly, use `/workflows run <prompt>`, call the `workflow` tool, or use a saved workflow command. Standing `/effort high|ultra` remains available as an explicit session opt-in for substantive messages.
 
 ## How it works
 
-![A prompt becomes deterministic orchestration, parallel routed agents, verification, and one result](https://raw.githubusercontent.com/QuintinShaw/pi-dynamic-workflows/main/assets/readme/workflow.png)
+![A prompt becomes deterministic orchestration, parallel routed agents, verification, and one result](https://raw.githubusercontent.com/vaakx-dev/pi-dynamic-workflows/main/assets/readme/workflow.png)
 
 1. **Orchestrate** — Pi writes a deterministic JavaScript workflow with `agent()`, `parallel()`, `pipeline()`, and `phase()`.
 2. **Fan out** — fresh subagent sessions run concurrently, optionally on different models or isolated git worktrees.
@@ -114,12 +114,10 @@ Pi can manage background runs directly with the `workflow_control` tool instead 
 | Command | Purpose |
 | --- | --- |
 | `/workflows` | Open the interactive run navigator |
-| `/workflows run <prompt>` | Arm workflow mode for a prompt even when keyword triggering is off |
+| `/workflows run <prompt>` | Explicitly execute a workflow for a prompt |
 | `/workflows status <id>` | Watch a run and print its result when complete |
 | `/workflows pause\|resume\|stop\|rm <id>` | Control a run |
 | `/workflows save <name>` | Save the latest script as a reusable command |
-| `/workflows-trigger off\|on\|status` | Control automatic keyword triggering |
-| `/workflows-trigger set <word>\|reset` | Set or reset the trigger word |
 | `/workflows-progress compact\|detailed\|status\|max <N>` | Live-panel detail level (and max agents shown per phase in detailed mode) |
 | `/workflows-models` | Map model tiers and thinking levels |
 | `/ultracode [off]` | Toggle exhaustive automatic workflows |
@@ -151,7 +149,7 @@ In the navigator: `↑/↓` select · `enter/→` open · `esc/←` back · `p` 
 | `label` / `phase` | Display label and phase override |
 | `timeoutMs` / `retries` | Optional per-agent timeout and recoverable-failure retries |
 
-The [full documentation](https://quintinshaw.github.io/pi-dynamic-workflows/) covers every option, structured output, determinism, saved workflows, and operational control.
+The [full documentation](https://vaakx-dev.github.io/pi-dynamic-workflows/) covers every option, structured output, determinism, saved workflows, and operational control.
 
 <details>
 <summary><strong>Model tiers and run controls</strong></summary>
@@ -190,21 +188,6 @@ Completed background runs persist their full result in the project run JSON. The
 </details>
 
 <details>
-<summary><strong>Keyword trigger</strong></summary>
-
-Set a literal, case-insensitive custom trigger in `~/.pi/workflows/settings.json`:
-
-```json
-{
-  "keywordTriggerWord": "pi-workflow"
-}
-```
-
-The default `workflow` also matches `workflows`; a custom word matches exactly. Trigger words are case-insensitive and Unicode identifier-bounded, and do not activate inside paths, slash commands, or identifier-like text. Detection is purely textual, applied at submit time to the message you send — it does not depend on, or own, Pi's editor component, so it works the same regardless of what else is installed.
-
-</details>
-
-<details>
 <summary><strong>How it maps to Claude Code dynamic workflows</strong></summary>
 
 | Claude Code dynamic workflows | pi-dynamic-workflows on Pi |
@@ -228,11 +211,7 @@ Journal replay — including edit-and-resume via `resumeFromRunId` — matches c
 
 ## Upgrading to 3.0
 
-3.0 is a milestone release. The one behavior change to know about:
-
-- **Keyword triggering now _authorizes_ the workflow tool instead of _forcing_ it.** In 2.x, typing the trigger word (default `workflow`) rewrote your message into a directive that forced a background workflow. In 3.0 it _arms_ the tool and the model decides: a real, decomposable request is fanned out across agents, but a message that only mentions workflows — a question, a filename, a passing reference — is answered normally. Nothing to configure. If you relied on the word always kicking off a run, use `/workflows run <prompt>` for the explicit path. Keyword triggering stays on by default; `/workflows-trigger off` disables it and `/workflows-trigger set <word>` changes the word.
-
-Everything else is additive or a fix: the `workflow_control` tool (list/status/pause/resume/stop), edited-script resume, auto-resume on provider usage limits, and persistence/perf hardening. Requires pi ≥ 0.80.8.
+3.0 is a milestone release. Everything else is additive or a fix: the `workflow_control` tool (list/status/pause/resume/stop), edited-script resume, auto-resume on provider usage limits, and persistence/perf hardening. Requires pi ≥ 0.80.8.
 
 Library API note: the unused `createSharedStoreTools` export was removed — use `createAgentStoreTools`.
 

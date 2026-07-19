@@ -76,7 +76,7 @@ test("createWorkflowTool always-on promptGuidelines is only the single gate line
   const tool = createWorkflowTool();
   assert.ok(Array.isArray(tool.promptGuidelines), "tool.promptGuidelines should be an array");
   // #65 / #88: the always-on prompt is a single opt-in gate; the ~20 how-to lines
-  // are NOT always-on — they live in workflowHowToGuidelines (armed-turn only).
+  // are not always-on and live in the tool description.
   assert.equal(tool.promptGuidelines.length, 1, "always-on guidelines should be a single gate line");
   assert.equal(tool.promptGuidelines[0], WORKFLOW_GATE_GUIDELINE);
   assert.match(tool.promptGuidelines[0], /ONLY call it when the user explicitly opts in/);
@@ -86,14 +86,14 @@ test("createWorkflowTool always-on promptGuidelines is only the single gate line
   assert.doesNotMatch(all, /parallel\(\) takes functions/, "parallel how-to must not be always-on");
 });
 
-test("workflowHowToGuidelines carries the full how-to for an armed turn", () => {
+test("workflowHowToGuidelines carries the full how-to for tool use", () => {
   const guidelines = workflowHowToGuidelines();
   assert.ok(Array.isArray(guidelines), "workflowHowToGuidelines should be an array");
   assert.ok(guidelines.length > 5, "should have several how-to guidelines");
 });
 
 // #P4 (R3): the always-on gate must OFFER rather than FORCE, and must include
-// task-shape positives so it doesn't lean toward under-triggering off-keyword.
+// task-shape positives so it doesn't lean toward under-triggering natural-language.
 test("WORKFLOW_GATE_GUIDELINE offers (not forces) and carries task-shape positives", () => {
   const gate = WORKFLOW_GATE_GUIDELINE;
   // Offer-with-cost, not force.

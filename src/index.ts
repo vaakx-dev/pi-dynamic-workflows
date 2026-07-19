@@ -103,17 +103,14 @@ export type {
 } from "./workflow-control-tool.js";
 export { createWorkflowControlTool } from "./workflow-control-tool.js";
 export {
-  type ArmReason,
-  buildArmedWorkflowPrompt,
+  buildEffortWorkflowPrompt,
   buildForcedWorkflowPrompt,
-  endsWithTrigger,
-  hasTrigger,
-  type InstallWorkflowKeywordArmingOptions,
-  installWorkflowKeywordArming,
+  EFFORT_CONVERSATIONAL_ESCAPE,
+  type InstallWorkflowInputOptions,
+  installWorkflowInputHandling,
   registerWorkflowProgressCommands,
-  registerWorkflowTriggerCommand,
-  type WorkflowModeState,
-} from "./workflow-editor.js";
+  WORKFLOW_TOOL_NAME,
+} from "./workflow-input.js";
 export type { ManagedRun, WorkflowManagerOptions } from "./workflow-manager.js";
 export { WorkflowManager } from "./workflow-manager.js";
 export type { WorkflowProjectPaths } from "./workflow-paths.js";
