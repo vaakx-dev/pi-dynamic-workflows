@@ -54,13 +54,13 @@ export const meta = {
 }
 
 phase('Scan')
-const files = await agent('List every route file under src/routes/.', { tier: 'small' })
+const files = await agent('List every route file under src/routes/.', { agentType: 'reviewer' })
 
 phase('Review')
 const findings = await parallel(
   files.split('\n').filter(Boolean).map((file) =>
     () => agent(`Audit ${file} for missing auth checks.`, {
-      tier: 'medium',
+      agentType: 'reviewer',
       isolation: 'worktree',
     }),
   ),
@@ -69,14 +69,14 @@ const findings = await parallel(
 phase('Verify')
 return await agent(
   'Synthesize and double-check these findings:\n' + findings.join('\n\n'),
-  { tier: 'big' },
+  { agentType: 'finalizer' },
 )
 ```
 
 ## Why use it
 
 - **Real parallel orchestration** — fan out up to 16 concurrent and 1000 total subagents from one orchestration script.
-- **Per-agent model routing** — use `small`, `medium`, or `big` tiers, or choose an exact provider/model and thinking level.
+- **Named-agent routing** — select reusable agent definitions that bind role prompts, tools, and models, with optional exact per-call model overrides.
 - **Journaled resume** — replay completed agents after interruption without rerunning them or spending their tokens again. The orchestrator can also resume with an **edited script** (`resumeFromRunId`): unchanged `agent()` calls replay from cache and only edited/new ones re-run — so a single bad prompt no longer means paying to re-run the whole workflow.
 - **Git worktree isolation** — let parallel agents edit safely on throwaway branches with `isolation: "worktree"`.
 - **Measured usage** — report real tokens and cost from each subagent session; add run, phase, or agent budgets only when you want them.
@@ -119,7 +119,6 @@ Pi can manage background runs directly with the `workflow_control` tool instead 
 | `/workflows pause\|resume\|stop\|rm <id>` | Control a run |
 | `/workflows save <name>` | Save the latest script as a reusable command |
 | `/workflows-progress compact\|detailed\|status\|max <N>` | Live-panel detail level (active telemetry by default; max completed agents per phase in detailed mode) |
-| `/workflows-models` | Map model tiers and thinking levels |
 | `/ultracode [off]` | Toggle exhaustive automatic workflows |
 | `/effort off\|high\|ultra` | Set the standing orchestration effort |
 
@@ -141,10 +140,8 @@ The live panel shows only observed activity (tool name/target, model response, w
 
 | Agent option | Description |
 | --- | --- |
-| `tier` | `small`, `medium`, or `big` model routing |
-| `model` | Exact `provider/modelId` or `provider/modelId:thinking`; overrides `tier` |
-| `agentType` | Named role, tool, and model definition |
-| `isolation` | Use `"worktree"` for conflict-free parallel edits |
+| `model` | Exact `provider/modelId` or `provider/modelId:thinking`; overrides the definition model |
+| `agentType` | Required named definition loaded from standard Pi agent directories |
 | `schema` | JSON Schema for a validated structured result |
 | `label` / `phase` | Display label and phase override |
 | `timeoutMs` / `retries` | Optional per-agent timeout and recoverable-failure retries |
@@ -152,23 +149,11 @@ The live panel shows only observed activity (tool name/target, model response, w
 The [full documentation](https://vaakx-dev.github.io/pi-dynamic-workflows/) covers every option, structured output, determinism, saved workflows, and operational control.
 
 <details>
-<summary><strong>Model tiers and run controls</strong></summary>
+<summary><strong>Named agents and run controls</strong></summary>
 
-Model tiers live at `~/.pi/workflows/model-tiers.json` and accept Pi CLI-style thinking suffixes:
+Every `agent()` call names a definition with `opts.agentType`. Use `reviewer` for read-only inspection and verification, `implementer` for edits, and `finalizer` for final edits or synthesis. Definitions use Pi's standard Markdown format and are loaded from `~/.pi/agent/agents/*.md` plus the nearest ancestor `.pi/agents/*.md`. Project definitions override same-named user definitions. Each definition requires `name` and `description`; `tools`, `model`, and the Markdown body are supported. Unknown names and invalid definitions fail instead of silently falling back.
 
-```json
-{
-  "tiers": {
-    "small": "openai-codex/gpt-5.4-mini:low",
-    "medium": "openai-codex/gpt-5.4:medium",
-    "big": "openai-codex/gpt-5.5:xhigh"
-  }
-}
-```
-
-Use `/workflows-models` to edit them interactively. Without a config, the extension ranks authenticated models by capability hints and assigns distinct models when possible.
-
-Runs have no default token budget or per-agent hard timeout. Add `tokenBudget`, `agentTimeoutMs`, phase budgets, or agent `timeoutMs` when you need explicit gates. `concurrency` is clamped to 16; `agentRetries` retries only recoverable failures. Defaults can be set in `~/.pi/workflows/settings.json` — e.g. `defaultTokenBudget` applies a hard budget to every run that doesn't pass its own `tokenBudget` (a project-level override of `null` cancels a global budget).
+Runs have no default token budget or per-agent hard timeout. Add `tokenBudget`, `agentTimeoutMs`, phase budgets, or agent `timeoutMs` when you need explicit gates. `concurrency` is clamped to 16; `agentRetries` retries only recoverable failures. Defaults can be set in `~/.pi/workflows/settings.json`.
 
 </details>
 
@@ -177,7 +162,7 @@ Runs have no default token budget or per-agent hard timeout. Add `tokenBudget`, 
 
 Extension state lives outside the repository under `~/.pi/workflows`:
 
-- global settings and tiers: `~/.pi/workflows/settings.json` and `model-tiers.json`
+- global settings: `~/.pi/workflows/settings.json`
 - project runs, journals, locks, and saved overrides: `~/.pi/workflows/projects/<project>/`
 - older project-local `.pi/workflows/runs` and `.pi/workflows/saved` remain readable as fallbacks
 
@@ -197,7 +182,7 @@ Completed background runs persist their full result in the project run JSON. The
 | Structured outputs | JSON Schema validation with bounded repair |
 | Background runs | Non-blocking run, live panel, and automatic result delivery |
 | Resume | Journaled replay of the unchanged completed prefix, including edit-and-resume with a revised script (`resumeFromRunId`) |
-| Model selection | Per-agent and per-phase routing across authenticated providers |
+| Model selection | Named definitions with optional exact per-agent overrides |
 | Ultracode | `/ultracode` or `/effort ultra` |
 | Additional Pi features | Worktree isolation, real cost accounting, deep research, and quality-pattern helpers |
 

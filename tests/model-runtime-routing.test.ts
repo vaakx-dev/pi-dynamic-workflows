@@ -67,7 +67,7 @@ test("a shared host ModelRegistry routes subagents to extension-registered provi
         models: core.models.map((m) => ({
           id: m.id,
           name: m.name ?? m.id,
-          reasoning: false,
+          reasoning: true,
           input: ["text"] as ("text" | "image")[],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: m.contextWindow ?? 128000,
@@ -80,12 +80,26 @@ test("a shared host ModelRegistry routes subagents to extension-registered provi
       // override — the subagent can only reach "fauxtest" via runtimeOf().
       const registry = new ModelRegistry(runtime);
       core.setResponses([fauxAssistantMessage("routed-through-extension-provider", { stopReason: "stop" })]);
-      const agent = new WorkflowAgent({ cwd, modelRegistry: registry });
-      const text = await agent.run("do the task", { label: "routing probe", model: "fauxtest/faux-model" });
+      const agent = new WorkflowAgent({
+        cwd,
+        modelRegistry: registry,
+        mainModel: "fauxtest/faux-model",
+        mainReasoning: "high",
+      });
+      let resolution: { model?: string; reasoning?: string; tools: string[] } | undefined;
+      const text = await agent.run("do the task", {
+        label: "routing probe",
+        onRuntimeResolved: (value) => {
+          resolution = value;
+        },
+      });
       assert.ok(
         typeof text === "string" && text.includes("routed-through-extension-provider"),
         `subagent did not stream through the extension-registered provider (got: ${String(text).slice(0, 120)})`,
       );
+      assert.equal(resolution?.model, "fauxtest/faux-model");
+      assert.equal(resolution?.reasoning, "high");
+      assert.ok((resolution?.tools.length ?? 0) > 0, "resolved active tools are reported");
     });
   } finally {
     rmSync(home, { recursive: true, force: true });

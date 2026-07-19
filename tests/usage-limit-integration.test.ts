@@ -26,7 +26,15 @@ import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { WorkflowAgent } from "../src/agent.js";
 import { WorkflowErrorCode } from "../src/errors.js";
-import { WorkflowManager } from "../src/workflow-manager.js";
+import { WorkflowManager as BaseWorkflowManager, type WorkflowManagerOptions } from "../src/workflow-manager.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+class WorkflowManager extends BaseWorkflowManager {
+  constructor(options: WorkflowManagerOptions = {}) {
+    super({ agentRegistry: testAgentRegistry(), ...options });
+  }
+}
+
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 const USAGE_LIMIT_MSG = "Codex usage limit reached (plus plan). Resets in ~3h.";
@@ -124,8 +132,8 @@ test("through the manager: a usage limit pauses the run (not fails) and resume r
     manager.on("error", () => {});
 
     const twoAgentScript = `export const meta = { name: 'i26_integration', description: 'two agents' }
-const a = await agent('first step', { label: 'first' })
-const b = await agent('second step', { label: 'second' })
+const a = await agent('first step', { agentType: 'reviewer', label: 'first' })
+const b = await agent('second step', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     // Agent 1 succeeds (journaled); agent 2 hits the usage limit.

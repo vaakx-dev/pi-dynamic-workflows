@@ -37,7 +37,7 @@ phase('Queries')
 const plan = await agent(
   'You are planning web research for this question:\\n' + question +
   '\\n\\nProduce ' + angles + ' diverse, specific search queries that together cover the question from different angles.',
-  { label: 'plan queries', schema: { type: 'object', properties: { queries: { type: 'array', items: { type: 'string' } } }, required: ['queries'] } }
+  { agentType: 'reviewer', label: 'plan queries', schema: { type: 'object', properties: { queries: { type: 'array', items: { type: 'string' } } }, required: ['queries'] } }
 )
 // The planner agent() can return null (e.g. a subagent that died on a terminal
 // provider error) or omit a usable queries array. Mirror the null-tolerance the
@@ -53,7 +53,7 @@ const gathered = await parallel(queries.map((q, i) => () =>
     '\\n\\nSteps: (1) call web_search with the query; (2) web_fetch the 2 most relevant result URLs; ' +
     '(3) extract concrete, verifiable factual claims, each tagged with the exact source URL it came from. ' +
     'Do NOT invent sources or claims — report only what the fetched pages actually say.',
-    { label: 'research ' + (i + 1), schema: { type: 'object', properties: { sources: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, claims: { type: 'array', items: { type: 'string' } } }, required: ['url', 'claims'] } } }, required: ['sources'] } }
+    { agentType: 'reviewer', label: 'research ' + (i + 1), schema: { type: 'object', properties: { sources: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, claims: { type: 'array', items: { type: 'string' } } }, required: ['url', 'claims'] } } }, required: ['sources'] } }
   )
 ))
 const allSources = gathered.filter(Boolean).flatMap((g) => (g && g.sources) || [])
@@ -63,7 +63,7 @@ const verdict = await agent(
   'Cross-check these research sources. Group claims that assert the same fact across different source URLs. ' +
   'Keep a claim only if it is supported by at least ' + minSupport + ' distinct source URLs OR by one clearly authoritative source. ' +
   'Discard claims found in a single weak source or that conflict with others.\\n\\nSOURCES JSON:\\n' + JSON.stringify(allSources),
-  { label: 'cross-check', schema: { type: 'object', properties: { supported: { type: 'array', items: { type: 'object', properties: { claim: { type: 'string' }, sources: { type: 'array', items: { type: 'string' } } }, required: ['claim', 'sources'] } }, discarded: { type: 'array', items: { type: 'string' } } }, required: ['supported'] } }
+  { agentType: 'reviewer', label: 'cross-check', schema: { type: 'object', properties: { supported: { type: 'array', items: { type: 'object', properties: { claim: { type: 'string' }, sources: { type: 'array', items: { type: 'string' } } }, required: ['claim', 'sources'] } }, discarded: { type: 'array', items: { type: 'string' } } }, required: ['supported'] } }
 )
 
 phase('Report')
@@ -71,7 +71,7 @@ const report = await agent(
   'Write a concise, well-structured research report that answers the question using ONLY the supported claims below. ' +
   'Cite source URLs inline next to each claim. If the evidence is thin, say so explicitly.\\n\\n' +
   'QUESTION: ' + question + '\\n\\nSUPPORTED CLAIMS JSON:\\n' + JSON.stringify((verdict && verdict.supported) || []),
-  { label: 'write report' }
+  { agentType: 'finalizer', label: 'write report' }
 )
 
 return { question, queries, supported: (verdict && verdict.supported) || [], report }`;
@@ -88,7 +88,7 @@ export function generateCodebaseAuditWorkflow(scope: string, checks: string[]): 
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .slice(0, 20);
-      return `  () => agent('Audit ${check} across: ' + scope, { label: '${label}' }),`;
+      return `  () => agent('Audit ${check} across: ' + scope, { agentType: 'reviewer', label: '${label}' }),`;
     })
     .join("\n");
 
@@ -112,13 +112,13 @@ phase('Cross-Validation');
 const validated = await agent(
   'Cross-validate these audit findings. Remove false positives and confirm real issues:\\n' +
   JSON.stringify(findings),
-  { label: 'validator' }
+  { agentType: 'reviewer', label: 'validator' }
 );
 
 phase('Report');
 const report = await agent(
   'Generate a prioritized audit report with actionable recommendations:\\n' + validated,
-  { label: 'report-writer' }
+  { agentType: 'finalizer', label: 'report-writer' }
 );
 
 return { findings, validated, report };`;

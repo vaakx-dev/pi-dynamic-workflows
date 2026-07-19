@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { JournalEntry } from "../src/workflow.js";
-import { runWorkflow } from "../src/workflow.js";
+import { runWorkflow as executeWorkflow, type JournalEntry, type WorkflowRunOptions } from "../src/workflow.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+function runWorkflow<T = unknown>(script: string, options: WorkflowRunOptions = {}) {
+  return executeWorkflow<T>(script, { agentRegistry: testAgentRegistry(), ...options });
+}
 
 const noopAgent = {
   async run() {

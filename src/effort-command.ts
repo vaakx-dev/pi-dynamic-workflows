@@ -1,11 +1,11 @@
 /**
  * Standing `/effort` opt-in (pi's answer to CC's ultracode): a session toggle that
- * auto-arms a workflow for substantive interactive messages, with effort-tier
+ * auto-arms a workflow for substantive interactive messages, with effort-level
  * guidance nudging fan-out breadth and the hard caps (tokenBudget / maxAgents) the
  * model should set on the workflow tool call.
  *
  * Honest scope: the runtime cannot enforce "reviewer N / loop K" — those live in
- * the script the model writes — so the tiers are guidance plus the model setting
+ * the script the model writes — so the levels are guidance plus the model setting
  * the real hard caps (tokenBudget/maxAgents are genuine runtime ceilings). The
  * pre-flight ceiling-confirm dialog (roadmap P1-5 #4) is a downscope point: an
  * `input` hook transforms synchronously and can't await a confirm, so it is left
@@ -27,7 +27,7 @@ export function createEffortState(): EffortState {
 const HIGH_DIRECTIVE =
   "Effort: HIGH. Be thorough — use a few parallel reviewers/perspectives and an adversarial verify pass (see verify()/judgePanel()); set a moderate tokenBudget and maxAgents on the workflow tool call.";
 const ULTRA_DIRECTIVE =
-  "Effort: ULTRA. Be exhaustive — fan out widely (more reviewers/judges, deeper loopUntilDry rounds, a completenessCheck at the end), and prefer the big tier for synthesis. This can spend a lot of tokens quickly, so set explicit caps you're comfortable paying for (a generous but bounded tokenBudget and a high maxAgents) on the workflow tool call rather than leaving them unbounded.";
+  "Effort: ULTRA. Be exhaustive — fan out widely (more reviewers/judges, deeper loopUntilDry rounds, a completenessCheck at the end), and use the finalizer agent for synthesis. This can spend a lot of tokens quickly, so set explicit caps you're comfortable paying for (a generous but bounded tokenBudget and a high maxAgents) on the workflow tool call rather than leaving them unbounded.";
 
 /** The extra directive appended to the forced-workflow prompt for an effort level. */
 export function effortDirective(level: EffortLevel): string | undefined {
@@ -79,7 +79,7 @@ export function registerEffortCommand(pi: ExtensionAPI, state: EffortState): voi
       }
       state.level = "ultra";
       await say(
-        "Ultracode ON — substantive messages now auto-arm an exhaustive workflow (wide fan-out, big-tier synthesis). Use /ultracode off to stop.",
+        "Ultracode ON — substantive messages now auto-arm an exhaustive workflow (wide fan-out, finalizer synthesis). Use /ultracode off to stop.",
       );
     },
   });

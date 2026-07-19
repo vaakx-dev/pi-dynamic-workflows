@@ -5,11 +5,19 @@ import { join } from "node:path";
 import test from "node:test";
 import type { AgentUsage } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
-import { WorkflowManager } from "../src/workflow-manager.js";
+import { WorkflowManager as BaseWorkflowManager, type WorkflowManagerOptions } from "../src/workflow-manager.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+class WorkflowManager extends BaseWorkflowManager {
+  constructor(options: WorkflowManagerOptions = {}) {
+    super({ agentRegistry: testAgentRegistry(), ...options });
+  }
+}
+
 import {
+  agentRoutingGuideline,
   backgroundStartedText,
   createWorkflowTool,
-  modelRoutingGuideline,
   WORKFLOW_GATE_GUIDELINE,
   workflowHowToGuidelines,
 } from "../src/workflow-tool.js";
@@ -124,12 +132,14 @@ test("createWorkflowTool folds the how-to into the tool description", () => {
   assert.doesNotMatch(tool.promptGuidelines.join(" "), /export const meta = \{/);
 });
 
-test("workflowHowToGuidelines routes normal work through tiers and reserves exact models for user requests", () => {
+test("workflowHowToGuidelines requires agentType roles and reserves model for explicit overrides", () => {
   const all = workflowHowToGuidelines().join(" ");
 
-  assert.match(all, /opts\.tier/);
-  assert.match(all, /small.+medium.+big/s);
-  assert.match(all, /opts\.model only when the user names/i);
+  assert.match(all, /agentType/);
+  assert.match(all, /reviewer/);
+  assert.match(all, /implementer/);
+  assert.match(all, /finalizer/);
+  assert.match(all, /opts\.model only for an explicit per-call override/i);
 });
 
 test("workflowHowToGuidelines keep budget and timeout unbounded by default", () => {
@@ -164,36 +174,15 @@ test("workflowHowToGuidelines mention retry and concurrency controls", () => {
   assert.match(all, /null handling/i);
 });
 
-// ─── modelRoutingGuideline ──────────────────────────────────────────────────────
+// ─── agentRoutingGuideline ──────────────────────────────────────────────────────
 
-test("modelRoutingGuideline mentions all three tier names", () => {
-  const text = modelRoutingGuideline();
-  assert.ok(text.includes("small"), "should mention small tier");
-  assert.ok(text.includes("medium"), "should mention medium tier");
-  assert.ok(text.includes("big"), "should mention big tier");
-});
-
-test("modelRoutingGuideline describes each tier purpose", () => {
-  const text = modelRoutingGuideline();
-  assert.ok(text.includes("lightweight"), "should contain lightweight");
-  assert.ok(text.includes("balanced"), "should contain balanced");
-  assert.ok(text.includes("synthesis"), "should contain synthesis");
-});
-
-test("modelRoutingGuideline explains tier vs model priority", () => {
-  const text = modelRoutingGuideline();
-  assert.ok(text.includes("opts.tier"), "should mention opts.tier");
-  assert.ok(text.includes("opts.model"), "should mention opts.model");
-  assert.ok(
-    /opts\.(tier|model).+opts\.(model|tier)/.test(text),
-    "should explain ordering / relationship between tier and model",
-  );
-});
-
-test("modelRoutingGuideline explains when to use each option", () => {
-  const text = modelRoutingGuideline();
-  assert.ok(/small.*(exploration|search|inventory|agents)/i.test(text), "small tier should mention light workloads");
-  assert.ok(/big.*(synthesis|judgment|decision)/i.test(text), "big tier should mention heavy reasoning");
+test("agentRoutingGuideline requires named standard definitions", () => {
+  const text = agentRoutingGuideline();
+  assert.match(text, /Every agent\(\) call must set opts\.agentType/);
+  assert.match(text, /~\/\.pi\/agent\/agents/);
+  assert.match(text, /nearest ancestor \.pi\/agents/);
+  assert.match(text, /Unknown names fail/);
+  assert.doesNotMatch(text, /opts\.tier/);
 });
 
 test("createWorkflowTool invalid args throws descriptive error", () => {
@@ -222,8 +211,8 @@ test("createWorkflowTool does not add configured model IDs to promptGuidelines",
   assert.doesNotMatch(tool.promptGuidelines.join(" "), /router\/later-private-model/);
 });
 
-test("modelRoutingGuideline output is non-empty and well-formed", () => {
-  const text = modelRoutingGuideline();
+test("agentRoutingGuideline output is non-empty and well-formed", () => {
+  const text = agentRoutingGuideline();
   assert.ok(text.length > 50, "should be a substantial instruction");
   assert.ok(text.endsWith(".") || text.endsWith("") || text.endsWith("`"), "should end properly");
   assert.ok(!text.includes("undefined"), "no undefined interpolation");
@@ -282,7 +271,7 @@ test("createWorkflowTool prepareArguments passes through args", () => {
 // ─── resumeFromRunId (edited-script iteration) ─────────────────────────────────
 
 const resumeToolScript = `export const meta = { name: 'resume_tool', description: 'one agent' }
-const a = await agent('do it', { label: 'a' })
+const a = await agent('do it', { agentType: 'reviewer', label: 'a' })
 return { a }`;
 
 function toolFakeAgent(result: unknown = "ok") {
@@ -427,8 +416,8 @@ test(
     const tool = createWorkflowTool({ cwd, manager });
 
     const v1 = `export const meta = { name: 'iter', description: 'two' }
-const a = await agent('FIRST', { label: 'first' })
-const b = await agent('SECOND-ORIG', { label: 'second' })
+const a = await agent('FIRST', { agentType: 'reviewer', label: 'first' })
+const b = await agent('SECOND-ORIG', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
     const { runId, promise } = manager.startInBackground(v1);
     await promise.catch(() => {});
@@ -436,8 +425,8 @@ return { a, b }`;
 
     failSecond = false;
     const v2 = `export const meta = { name: 'iter', description: 'two' }
-const a = await agent('FIRST', { label: 'first' })
-const b = await agent('SECOND-EDITED', { label: 'second' })
+const a = await agent('FIRST', { agentType: 'reviewer', label: 'first' })
+const b = await agent('SECOND-EDITED', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
     const seenBefore = seen.length;
     const res = await tool.execute("t5", { script: v2, resumeFromRunId: runId }, undefined, undefined, undefined);

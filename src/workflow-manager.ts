@@ -3,8 +3,9 @@
  */
 
 import { EventEmitter } from "node:events";
-import type { ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { CreateAgentSessionOptions, ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { WorkflowAgent } from "./agent.js";
+import type { AgentRegistry } from "./agent-registry.js";
 import { preview, recomputeWorkflowSnapshot, type WorkflowSnapshot } from "./display.js";
 import { isProviderUsageLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 import {
@@ -119,8 +120,12 @@ export interface WorkflowManagerOptions {
   loadSavedWorkflow?: (name: string) => string | undefined;
   /** Inject a custom agent runner (tests); defaults to a real subagent session. */
   agent?: Pick<WorkflowAgent, "run">;
-  /** The session's main model (provider/id), for auto-tiering explore agents. */
+  /** The active Pi session model (provider/id). */
   mainModel?: string;
+  /** The active Pi session reasoning level. */
+  mainReasoning?: CreateAgentSessionOptions["thinkingLevel"];
+  /** Injectable named-agent definitions, primarily for embedders and tests. */
+  agentRegistry?: AgentRegistry;
   /**
    * The host Pi session's model registry. When provided, workflow subagents
    * resolve models against the same registry as the main session, including
@@ -156,8 +161,10 @@ export class WorkflowManager extends EventEmitter {
   private concurrency: number;
   private loadSavedWorkflow?: (name: string) => string | undefined;
   private agent?: Pick<WorkflowAgent, "run">;
-  /** The session's main model (provider/id), for auto-tiering explore agents. */
+  /** The active Pi session model (provider/id). */
   private mainModel?: string;
+  private mainReasoning?: CreateAgentSessionOptions["thinkingLevel"];
+  private agentRegistry?: AgentRegistry;
   /** The host Pi session's model registry, shared with subagents. */
   private modelRegistry?: ModelRegistry;
   /** The current pi session id; runs are stamped with it and listRuns() filters by it. */
@@ -175,6 +182,8 @@ export class WorkflowManager extends EventEmitter {
     this.loadSavedWorkflow = options.loadSavedWorkflow;
     this.agent = options.agent;
     this.mainModel = options.mainModel;
+    this.mainReasoning = options.mainReasoning;
+    this.agentRegistry = options.agentRegistry;
     this.modelRegistry = options.modelRegistry;
     this.sessionId = options.sessionId;
     this.defaultAgentTimeoutMs = options.defaultAgentTimeoutMs ?? null;
@@ -216,9 +225,10 @@ export class WorkflowManager extends EventEmitter {
     }
   }
 
-  /** Set the session's main model (provider/id). Used to auto-tier explore agents. */
-  setMainModel(spec: string | undefined): void {
+  /** Set the active Pi session model and reasoning inherited by unoverridden calls. */
+  setMainModel(spec: string | undefined, reasoning?: CreateAgentSessionOptions["thinkingLevel"]): void {
     this.mainModel = spec;
+    this.mainReasoning = reasoning;
   }
 
   /** Set the host session's model registry so subagents resolve models consistently. */
@@ -434,6 +444,8 @@ export class WorkflowManager extends EventEmitter {
         runId: managed.runId,
         agent: this.agent,
         mainModel: this.mainModel,
+        mainReasoning: this.mainReasoning,
+        agentRegistry: this.agentRegistry,
         modelRegistry: this.modelRegistry,
         persistAgentSessions: this.persistAgentSessions,
         signal: managed.controller.signal,
@@ -483,7 +495,14 @@ export class WorkflowManager extends EventEmitter {
             status: "queued",
             model: event.model,
             agentType: event.agentType,
-            role: event.role,
+            source: event.source,
+            path: event.path,
+            fingerprint: event.fingerprint,
+            requestedModel: event.requestedModel,
+            resolvedModel: event.resolvedModel,
+            reasoning: event.reasoning,
+            tools: event.tools,
+            explicitModelOverride: event.explicitModelOverride,
             provenance: "live",
           });
           managed.snapshot.queuedCount = managed.snapshot.agents.filter((a) => a.status === "queued").length;
@@ -500,6 +519,16 @@ export class WorkflowManager extends EventEmitter {
           managed.snapshot.queuedCount = managed.snapshot.agents.filter((a) => a.status === "queued").length;
           managed.agentTimestamps.set(agent.id, { startedAt: agent.startedAt });
           this.emit("agentStart", { runId: managed.runId, ...event });
+          this.schedulePersist(managed);
+          progress();
+        },
+        onAgentResolved: (event) => {
+          const agent = managed.snapshot.agents.find((candidate) => candidate.callId === event.callId);
+          if (!agent) return;
+          agent.resolvedModel = event.resolvedModel;
+          agent.model = event.resolvedModel ?? agent.model;
+          agent.reasoning = event.reasoning;
+          agent.tools = event.tools;
           this.schedulePersist(managed);
           progress();
         },

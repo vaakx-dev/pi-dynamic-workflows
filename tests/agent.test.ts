@@ -9,8 +9,13 @@ import type { AgentRunOptions, AgentUsage } from "../src/agent.js";
 import { listAvailableModelSpecs, resolveAgentModelSpec, usageFromStats, WorkflowAgent } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
 import { resolveModelSpecWithThinking } from "../src/model-spec.js";
-import type { ModelTierConfig } from "../src/model-tier-config.js";
-import { runWorkflow } from "../src/workflow.js";
+import { runWorkflow as executeWorkflow, type WorkflowRunOptions } from "../src/workflow.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+function runWorkflow<T = unknown>(script: string, options: WorkflowRunOptions = {}) {
+  return executeWorkflow<T>(script, { agentRegistry: testAgentRegistry(), ...options });
+}
+
 import { withFakeHome, withFakeHomeAsync } from "./helpers/fake-home.js";
 
 // Private methods used for testing - cast to this type to access them without `any`
@@ -179,191 +184,12 @@ test("WorkflowAgent excludes discovered host extensions but honors an explicit r
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// resolveAgentModelSpec — model precedence: explicit model > tier > main model
+// resolveAgentModelSpec
 // ═══════════════════════════════════════════════════════════════════════════
 
-const tierConfig: ModelTierConfig = {
-  tiers: { small: "vendor/small", medium: "vendor/medium", big: "vendor/big" },
-};
-const loadCfg = () => tierConfig;
-const noCfg = () => null;
-
-test("resolveAgentModelSpec: explicit model wins over tier (the precedence bug fix)", () => {
-  // Even with a tier set AND a config that resolves it, an explicit model wins.
-  assert.equal(
-    resolveAgentModelSpec({ model: "explicit/model", tier: "small" }, "main/model", loadCfg),
-    "explicit/model",
-  );
-});
-
-test("resolveAgentModelSpec: explicit model wins even when no config exists", () => {
-  assert.equal(
-    resolveAgentModelSpec({ model: "explicit/model", tier: "small" }, "main/model", noCfg),
-    "explicit/model",
-  );
-});
-
-test("resolveAgentModelSpec: tier resolves from config when no explicit model", () => {
-  assert.equal(resolveAgentModelSpec({ tier: "big" }, "main/model", loadCfg), "vendor/big");
-});
-
-test("resolveAgentModelSpec: unconfigured tier falls back to the main model", () => {
-  assert.equal(resolveAgentModelSpec({ tier: "small" }, "main/model", noCfg), "main/model");
-  assert.equal(resolveAgentModelSpec({ tier: "unknown-tier" }, "main/model", loadCfg), "main/model");
-});
-
-test("resolveAgentModelSpec: untagged agent defaults to the configured medium tier", () => {
-  // The "set tier but nothing changed" fix: an agent with no model and no tier
-  // falls back to the user's medium tier when a config exists.
-  assert.equal(resolveAgentModelSpec({}, "main/model", loadCfg), "vendor/medium");
-});
-
-test("resolveAgentModelSpec: untagged agent with NO config falls through to session default", () => {
-  assert.equal(resolveAgentModelSpec({}, "main/model", noCfg), undefined);
-});
-
-test("resolveAgentModelSpec: untagged agent with a config lacking a medium tier => session default", () => {
-  const noMedium = () => ({ tiers: { small: "vendor/small" } });
-  assert.equal(resolveAgentModelSpec({}, "main/model", noMedium), undefined);
-});
-
-test("resolveAgentModelSpec: tier with no main model and no config yields undefined", () => {
-  assert.equal(resolveAgentModelSpec({ tier: "small" }, undefined, noCfg), undefined);
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// WorkflowAgent#loadTierConfig — memoize model-tiers.json once per instance
-// (perf fix: resolveAgentModelSpec's loadConfig previously re-read+parsed the
-// file from disk on every run() call for any agent without an explicit
-// options.model, which is a sync fs read on the hot per-agent path)
-// ═══════════════════════════════════════════════════════════════════════════
-
-type WorkflowAgentTierPrivates = {
-  loadTierConfig(loader?: () => ModelTierConfig | null): ModelTierConfig | null;
-};
-
-test("WorkflowAgent#loadTierConfig: the loader is invoked at most once across repeated calls", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" }) as unknown as WorkflowAgentTierPrivates;
-  let calls = 0;
-  const loader = () => {
-    calls++;
-    return tierConfig;
-  };
-
-  const first = agent.loadTierConfig(loader);
-  const second = agent.loadTierConfig(loader);
-  // Even a loader that would blow up if called proves the memoized branch
-  // never reaches the loader again.
-  const third = agent.loadTierConfig(() => {
-    throw new Error("loader must not be invoked again once memoized");
-  });
-
-  assert.equal(calls, 1, "the real loader should only run once");
-  assert.deepEqual(first, tierConfig);
-  assert.equal(second, first, "repeated calls must return the memoized value");
-  assert.equal(third, first);
-});
-
-test("WorkflowAgent#loadTierConfig: a legitimately-null config (no file) is memoized too, not re-checked", () => {
-  const agent = new WorkflowAgent({ cwd: "/tmp" }) as unknown as WorkflowAgentTierPrivates;
-  let calls = 0;
-  const loader = () => {
-    calls++;
-    return null;
-  };
-
-  assert.equal(agent.loadTierConfig(loader), null);
-  assert.equal(agent.loadTierConfig(loader), null);
-  assert.equal(calls, 1, "null is a valid memoized result, not a 'try again' signal");
-});
-
-test("WorkflowAgent#loadTierConfig: memoization is per-instance (two agents, two runs, don't leak into each other)", () => {
-  const a = new WorkflowAgent({ cwd: "/tmp" }) as unknown as WorkflowAgentTierPrivates;
-  const b = new WorkflowAgent({ cwd: "/tmp" }) as unknown as WorkflowAgentTierPrivates;
-  const cfgA: ModelTierConfig = { tiers: { medium: "vendor-a/model" } };
-  const cfgB: ModelTierConfig = { tiers: { medium: "vendor-b/model" } };
-
-  assert.equal(
-    a.loadTierConfig(() => cfgA),
-    cfgA,
-  );
-  assert.equal(
-    b.loadTierConfig(() => cfgB),
-    cfgB,
-  );
-  // `a` stays pinned to cfgA even when handed a different loader later — a
-  // fresh WorkflowAgent per run (the production lifetime; see workflow.ts's
-  // `new WorkflowAgent(options)` per runWorkflow() call) means two runs with
-  // different on-disk configs still each see their own correct snapshot,
-  // without a process-global cache leaking state across them.
-  assert.equal(
-    a.loadTierConfig(() => cfgB),
-    cfgA,
-  );
-});
-
-test("WorkflowAgent.run(): tier routing resolves correctly through the real (non-injected) disk loader, read only once across two run() calls", async () => {
-  // End-to-end proof that memoization doesn't break the real wiring: writes an
-  // actual model-tiers.json to a fake home, runs two real subagents against a
-  // faux (no-network) provider, and confirms both resolve the tier-configured
-  // model AND that the underlying config object is reused (same reference)
-  // across both run() calls rather than re-read/re-parsed.
-  const home = mkdtempSync(join(tmpdir(), "pi-dw-tier-memo-home-"));
-  const cwd = mkdtempSync(join(tmpdir(), "pi-dw-tier-memo-cwd-"));
-  const core = createFauxCore({
-    provider: "fauxtest",
-    models: [{ id: "faux-model", name: "Faux Model", contextWindow: 128000, maxTokens: 4096 }],
-  });
-  try {
-    await withFakeHomeAsync(home, async () => {
-      const tiersDir = join(home, ".pi", "workflows");
-      mkdirSync(tiersDir, { recursive: true });
-      writeFileSync(join(tiersDir, "model-tiers.json"), JSON.stringify({ tiers: { medium: "fauxtest/faux-model" } }));
-
-      const runtime = await ModelRuntime.create({ authPath: join(home, "auth.json"), modelsPath: null });
-      runtime.registerProvider("fauxtest", {
-        name: "Faux Test",
-        baseUrl: "http://127.0.0.1:9/faux",
-        apiKey: "faux-dummy-key-not-used",
-        api: core.api,
-        streamSimple: core.streamSimple as never,
-        models: core.models.map((m) => ({
-          id: m.id,
-          name: m.name ?? m.id,
-          reasoning: false,
-          input: ["text"] as ("text" | "image")[],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: m.contextWindow ?? 128000,
-          maxTokens: m.maxTokens ?? 4096,
-        })),
-      });
-      const registry = new ModelRegistry(runtime);
-      core.setResponses([
-        fauxAssistantMessage("tier-routed-first", { stopReason: "stop" }),
-        fauxAssistantMessage("tier-routed-second", { stopReason: "stop" }),
-      ]);
-
-      const agent = new WorkflowAgent({ cwd, modelRegistry: registry });
-      const spy = test.mock.method(agent as unknown as WorkflowAgentTierPrivates, "loadTierConfig");
-
-      const first = await agent.run("task one", { label: "a", tier: "medium" });
-      const second = await agent.run("task two", { label: "b", tier: "medium" });
-
-      assert.ok(first.includes("tier-routed-first"), "first agent should route through the tiered faux model");
-      assert.ok(second.includes("tier-routed-second"), "second agent should route through the tiered faux model");
-
-      assert.equal(spy.mock.callCount(), 2, "loadTierConfig() is called once per run(), as expected");
-      const [firstResult, secondResult] = spy.mock.calls.map((c) => c.result);
-      assert.equal(
-        firstResult,
-        secondResult,
-        "the SAME config object must be reused across run() calls — the file was read/parsed only once",
-      );
-    });
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
-  }
+test("resolveAgentModelSpec returns only an explicit override", () => {
+  assert.equal(resolveAgentModelSpec({ model: "explicit/model" }), "explicit/model");
+  assert.equal(resolveAgentModelSpec({}), undefined);
 });
 
 test("WorkflowAgent constructor accepts all option shapes without throwing", () => {
@@ -637,7 +463,7 @@ test("agent() in workflow passes prompt and label to runner", async () => {
   const rec = new CallRecordingAgent();
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('analyze this', { label: 'analyzer' })
+     const r = await agent('analyze this', { agentType: 'reviewer', label: 'analyzer' })
      return r`,
     { agent: rec, persistLogs: false },
   );
@@ -650,7 +476,7 @@ test("agent() in workflow forwards modelRegistry to the runner", async () => {
   const fakeRegistry = { getAvailable: () => [], find: () => undefined, getAll: () => [] } as any;
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('task', { label: 't' })
+     const r = await agent('task', { agentType: 'reviewer', label: 't' })
      return r`,
     { agent: rec, persistLogs: false, modelRegistry: fakeRegistry },
   );
@@ -662,7 +488,7 @@ test("agent() in workflow passes model spec to runner", async () => {
   const rec = new CallRecordingAgent();
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('task', { label: 't', model: 'fast-llm/model' })
+     const r = await agent('task', { agentType: 'reviewer', label: 't', model: 'fast-llm/model' })
      return r`,
     { agent: rec, persistLogs: false },
   );
@@ -675,7 +501,7 @@ test("agent() in workflow forwards modelRegistry for CLI-style model parsing", a
   const modelRegistry = { getAll: () => [] };
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('task', { label: 't', model: 'fast-llm/model:xhigh' })
+     const r = await agent('task', { agentType: 'reviewer', label: 't', model: 'fast-llm/model:xhigh' })
      return r`,
     { agent: rec, modelRegistry: modelRegistry as never, persistLogs: false },
   );
@@ -689,7 +515,7 @@ test("agent() in workflow fires onAgentStart and onAgentEnd callbacks", async ()
   const events: string[] = [];
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     await agent('hello', { label: 'greeter' })
+     await agent('hello', { agentType: 'reviewer', label: 'greeter' })
      return 1`,
     {
       agent: rec,
@@ -712,7 +538,7 @@ test("agent() in workflow forwards compact subagent history snapshots", async ()
 
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     await agent('hello', { label: 'greeter' })
+     await agent('hello', { agentType: 'reviewer', label: 'greeter' })
      return 1`,
     {
       agent: historyRunner,
@@ -732,7 +558,7 @@ test("agent() in workflow fires onAgentStart with phase info", async () => {
   await runWorkflow(
     `export const meta = { name: 'test', description: 't', phases: [{ title: 'Phase1' }] }
      phase('Phase1')
-     await agent('work', { label: 'w' })
+     await agent('work', { agentType: 'reviewer', label: 'w' })
      return 1`,
     {
       agent: rec,
@@ -749,7 +575,7 @@ test("agent() in workflow returns runner result", async () => {
   rec.result = { findings: ["issue1"] };
   const result = await runWorkflow<{ findings: string[] }>(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('analyze', { label: 'a' })
+     const r = await agent('analyze', { agentType: 'reviewer', label: 'a' })
      return r`,
     { agent: rec, persistLogs: false },
   );
@@ -772,7 +598,7 @@ test("agent() in workflow returns null for recoverable errors", async () => {
     | undefined;
   const result = await runWorkflow<unknown>(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('failing task', { label: 'f' })
+     const r = await agent('failing task', { agentType: 'reviewer', label: 'f' })
      return r`,
     { agent: failer, persistLogs: false, onAgentEnd: (e) => (end = e) },
   );
@@ -796,7 +622,7 @@ test("agent() in workflow treats empty text output as a recoverable failure", as
     | undefined;
   const result = await runWorkflow<unknown>(
     `export const meta = { name: 'test', description: 't' }
-     const r = await agent('empty task', { label: 'empty' })
+     const r = await agent('empty task', { agentType: 'reviewer', label: 'empty' })
      return r`,
     { agent: rec, persistLogs: false, onAgentEnd: (e) => (end = e) },
   );
@@ -827,7 +653,7 @@ test("agent() in workflow reports non-recoverable errors before throwing", async
     () =>
       runWorkflow<unknown>(
         `export const meta = { name: 'test', description: 't' }
-         await agent('schema task', { label: 'schema' })
+         await agent('schema task', { agentType: 'reviewer', label: 'schema' })
          return 1`,
         { agent: failer, persistLogs: false, onAgentEnd: (e) => (end = e) },
       ),
@@ -845,7 +671,7 @@ test("agent() in workflow fires onTokenUsage after run", async () => {
   const usageEvents: Array<{ input: number; output: number; total: number }> = [];
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     await agent('task', { label: 't' })
+     await agent('task', { agentType: 'reviewer', label: 't' })
      return 1`,
     {
       agent: rec,
@@ -861,7 +687,7 @@ test("agent() passes onModelResolved callback for display model updates", async 
   const rec = new CallRecordingAgent();
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     await agent('task', { label: 't', model: 'some/model' })
+     await agent('task', { agentType: 'reviewer', label: 't', model: 'some/model' })
      return 1`,
     {
       agent: rec,
@@ -879,8 +705,8 @@ test("agent() accumulates usage across multiple agents", async () => {
   const usageEvents: Array<{ total: number }> = [];
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     await agent('first', { label: 'a' })
-     await agent('second', { label: 'b' })
+     await agent('first', { agentType: 'reviewer', label: 'a' })
+     await agent('second', { agentType: 'reviewer', label: 'b' })
      return 1`,
     {
       agent: rec,
@@ -903,7 +729,7 @@ test("agent() with timeout should handle gracefully (timeout returns null)", asy
   const result = await runWorkflow<unknown>(
     `export const meta = { name: 'test', description: 't' }
      let val = null
-     try { val = await agent('slow', { label: 's', timeoutMs: 5 }) } catch (e) { val = 'error:' + (e && e.message || e) }
+     try { val = await agent('slow', { agentType: 'reviewer', label: 's', timeoutMs: 5 }) } catch (e) { val = 'error:' + (e && e.message || e) }
      return { val }`,
     {
       agent: slow,
@@ -929,7 +755,7 @@ test("agent() default timeout is unbounded", async () => {
   };
   const result = await runWorkflow<{ val: string }>(
     `export const meta = { name: 'test', description: 't' }
-     const val = await agent('slow', { label: 's' })
+     const val = await agent('slow', { agentType: 'reviewer', label: 's' })
      return { val }`,
     { agent: slow, persistLogs: false },
   );
@@ -946,7 +772,7 @@ test("agent() timeoutMs null overrides a run-level timeout", async () => {
   };
   const result = await runWorkflow<{ val: string }>(
     `export const meta = { name: 'test', description: 't' }
-     const val = await agent('slow', { label: 's', timeoutMs: null })
+     const val = await agent('slow', { agentType: 'reviewer', label: 's', timeoutMs: null })
      return { val }`,
     { agent: slow, agentTimeoutMs: 5, persistLogs: false },
   );
@@ -958,7 +784,7 @@ test("agent() with parallel invokes all agents", async () => {
   const rec = new CallRecordingAgent();
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     const rs = await parallel(['a','b','c'].map(p => () => agent(p, { label: p })))
+     const rs = await parallel(['a','b','c'].map(p => () => agent(p, { agentType: 'reviewer', label: p })))
      return rs`,
     { agent: rec, persistLogs: false },
   );
@@ -972,8 +798,8 @@ test("agent() with pipeline invokes agent per stage per item", async () => {
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
      const rs = await pipeline(['x','y'],
-       item => agent('stage1 ' + item, { label: 's1-' + item }),
-       result => agent('stage2 ' + result, { label: 's2-' + result }),
+       item => agent('stage1 ' + item, { agentType: 'reviewer', label: 's1-' + item }),
+       result => agent('stage2 ' + result, { agentType: 'reviewer', label: 's2-' + result }),
      )
      return rs`,
     { agent: rec, persistLogs: false },
@@ -986,8 +812,8 @@ test("agent() monitors agent count and calls onAgentStart/End for each", async (
   const counts: number[] = [];
   await runWorkflow(
     `export const meta = { name: 'test', description: 't' }
-     await agent('a', { label: 'a' })
-     await agent('b', { label: 'b' })
+     await agent('a', { agentType: 'reviewer', label: 'a' })
+     await agent('b', { agentType: 'reviewer', label: 'b' })
      return 1`,
     {
       agent: rec,

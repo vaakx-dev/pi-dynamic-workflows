@@ -5,7 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 import type { AgentUsage } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
-import { WorkflowManager } from "../src/workflow-manager.js";
+import { WorkflowManager as BaseWorkflowManager, type WorkflowManagerOptions } from "../src/workflow-manager.js";
+import { testAgentDefinition, testAgentRegistry } from "./helpers/agents.js";
+
+class WorkflowManager extends BaseWorkflowManager {
+  constructor(options: WorkflowManagerOptions = {}) {
+    super({ agentRegistry: testAgentRegistry(), ...options });
+  }
+}
+
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 /** Agent runner that reports fixed usage so token accounting is exercised. */
@@ -64,19 +72,19 @@ function delayedAgent(delayMs: number, result: unknown = "slow") {
 
 const oneAgentScript = `export const meta = { name: 'tracked_demo', description: 'one agent' }
 phase('Work')
-const a = await agent('do it', { label: 'a' })
+const a = await agent('do it', { agentType: 'reviewer', label: 'a' })
 return { a }`;
 
 /** Two sequential agents: 'a' finishes, then 'b' starts. */
 const twoAgentScript = `export const meta = { name: 'two_agent_demo', description: 'two sequential agents' }
 phase('Work')
-const a = await agent('first', { label: 'a' })
-const b = await agent('second', { label: 'b' })
+const a = await agent('first', { agentType: 'reviewer', label: 'a' })
+const b = await agent('second', { agentType: 'reviewer', label: 'b' })
 return { a, b }`;
 
 /** Six agents fired in parallel, all resolving instantly — used to exercise a burst of persist ticks. */
 const burstAgentScript = `export const meta = { name: 'burst_demo', description: 'six agents in parallel' }
-const xs = await parallel(['a','b','c','d','e','f'].map((label) => () => agent(label, { label })))
+const xs = await parallel(['a','b','c','d','e','f'].map((label) => () => agent(label, { agentType: 'reviewer', label })))
 return xs`;
 
 /**
@@ -285,7 +293,7 @@ test(
       },
     });
     const script = `export const meta = { name: 'forwarding', description: 'manager controls' }
-const xs = await parallel(['a','b'].map((p) => () => agent(p, { label: p })))
+const xs = await parallel(['a','b'].map((p) => () => agent(p, { agentType: 'reviewer', label: p })))
 return xs`;
 
     const result = await manager.runSync(script, undefined, { concurrency: 1, agentRetries: 1 });
@@ -336,8 +344,8 @@ test(
   withTempCwd(async (cwd) => {
     const manager = new WorkflowManager({ cwd, agent: fakeAgent(), mainModel: "anthropic/claude-opus-4-8" });
     const script = `export const meta = { name: 'model_demo', description: 'per-agent models' }
-const a = await agent('explore', { label: 'scan', model: 'openai/gpt-5-mini' })
-const b = await agent('reason', { label: 'judge' })
+const a = await agent('explore', { agentType: 'reviewer', label: 'scan', model: 'openai/gpt-5-mini' })
+const b = await agent('reason', { agentType: 'reviewer', label: 'judge' })
 return { a, b }`;
     await manager.runSync(script);
 
@@ -345,6 +353,49 @@ return { a, b }`;
     const byLabel = Object.fromEntries((run?.agents ?? []).map((a) => [a.label, a.model]));
     assert.equal(byLabel.scan, "openai/gpt-5-mini", "explicit per-agent model is recorded");
     assert.equal(byLabel.judge, "anthropic/claude-opus-4-8", "default agent shows the main model");
+  }),
+);
+
+test(
+  "runSync persists complete named-agent provenance and resolved runtime metadata",
+  withTempCwd(async (cwd) => {
+    const agentRegistry = testAgentRegistry();
+    agentRegistry.set("reviewer", {
+      ...testAgentDefinition(agentRegistry, "reviewer"),
+      model: "definition/model",
+      tools: ["read"],
+      source: "project",
+      path: ".pi/agents/reviewer.md",
+      fingerprint: "1".repeat(64),
+    });
+    const manager = new WorkflowManager({
+      cwd,
+      agentRegistry,
+      agent: {
+        async run(_prompt, options) {
+          options.onRuntimeResolved?.({
+            model: "provider/canonical-model",
+            reasoning: "high",
+            tools: ["read", "store_get", "store_put"],
+          });
+          return "ok";
+        },
+      },
+    });
+    await manager.runSync(`export const meta = { name: 'metadata', description: 'metadata' }
+return await agent('inspect', { agentType: 'reviewer', model: 'call/model:xhigh' })`);
+
+    const state = manager.listRuns().find((run) => run.workflowName === "metadata")?.agents[0];
+    assert.equal(state?.agentType, "reviewer");
+    assert.equal(state?.source, "project");
+    assert.equal(state?.path, ".pi/agents/reviewer.md");
+    assert.equal(state?.fingerprint, "1".repeat(64));
+    assert.equal(state?.requestedModel, "call/model:xhigh");
+    assert.equal(state?.resolvedModel, "provider/canonical-model");
+    assert.equal(state?.model, "provider/canonical-model");
+    assert.equal(state?.reasoning, "high");
+    assert.deepEqual(state?.tools, ["read", "store_get", "store_put"]);
+    assert.equal(state?.explicitModelOverride, true);
   }),
 );
 
@@ -541,7 +592,7 @@ test(
     const manager = new WorkflowManager({ cwd, agent: fakeAgent() });
     manager.setMainModel("anthropic/claude-sonnet-4");
     const script = `export const meta = { name: 'mm_test', description: 'main model test' }
-const a = await agent('test', { label: 'a' })
+const a = await agent('test', { agentType: 'reviewer', label: 'a' })
 return { a }`;
     await manager.runSync(script);
     const run = manager.listRuns().find((r) => r.workflowName === "mm_test");
@@ -738,8 +789,8 @@ test(
     manager.on("error", () => {});
 
     const twoAgentScript = `export const meta = { name: 'two_agent', description: 'two agents test' }
-const a = await agent('first', { label: 'first' })
-const b = await agent('second', { label: 'second' })
+const a = await agent('first', { agentType: 'reviewer', label: 'first' })
+const b = await agent('second', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     const { runId, promise } = manager.startInBackground(twoAgentScript);
@@ -953,8 +1004,8 @@ test(
     manager.on("error", () => {});
 
     const twoAgentScript = `export const meta = { name: 'two_agent', description: 'two agents test' }
-const a = await agent('first', { label: 'first' })
-const b = await agent('second', { label: 'second' })
+const a = await agent('first', { agentType: 'reviewer', label: 'first' })
+const b = await agent('second', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     const { runId, promise: origPromise } = manager.startInBackground(twoAgentScript);
@@ -1014,8 +1065,8 @@ test(
     manager.on("paused", (e: { runId: string; reason?: string; resetHint?: string }) => pausedEvents.push(e));
 
     const twoAgentScript = `export const meta = { name: 'quota_demo', description: 'two agents' }
-const a = await agent('first', { label: 'first' })
-const b = await agent('second', { label: 'second' })
+const a = await agent('first', { agentType: 'reviewer', label: 'first' })
+const b = await agent('second', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     const { runId, promise } = manager.startInBackground(twoAgentScript);
@@ -1659,7 +1710,7 @@ test(
   withTempCwd(async (cwd) => {
     // Script that uses args
     const argsScript = `export const meta = { name: 'args_demo', description: 'args test' }
-const a = await agent('do it', { label: 'a' })
+const a = await agent('do it', { agentType: 'reviewer', label: 'a' })
 return { args, a }`;
 
     const manager = new WorkflowManager({ cwd, agent: fakeAgent({ total: 50 }) });
@@ -2234,7 +2285,7 @@ test(
   withTempCwd(async (cwd) => {
     const manager = new WorkflowManager({ cwd, agent: fakeAgent() });
     const script = `export const meta = { name: 'parallel_count', description: 'count parallel agents' }
-const results = await parallel([1,2,3].map(n => () => agent('task ' + n)))
+const results = await parallel([1,2,3].map(n => () => agent('task ' + n, { agentType: 'reviewer' })))
 return results`;
     const result = await manager.runSync(script);
     assert.equal(result.agentCount, 3, "parallel should execute all 3 agents");
@@ -2255,7 +2306,7 @@ test(
       },
     });
     const script = `export const meta = { name: 'parallel_order', description: 'check parallel order' }
-const results = await parallel([1,2,3].map(n => () => agent('task ' + n)))
+const results = await parallel([1,2,3].map(n => () => agent('task ' + n, { agentType: 'reviewer' })))
 return results`;
     const result = await manager.runSync(script);
     assert.equal(result.agentCount, 3, "3 agents should have run");
@@ -2327,8 +2378,8 @@ test(
 // auto-resume (UsageLimitScheduler calls resume(runId)) is unaffected.
 
 const editResumeScriptV1 = `export const meta = { name: 'edit_resume', description: 'two agents' }
-const a = await agent('FIRST', { label: 'first' })
-const b = await agent('SECOND-ORIGINAL', { label: 'second' })
+const a = await agent('FIRST', { agentType: 'reviewer', label: 'first' })
+const b = await agent('SECOND-ORIGINAL', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
 /** Runner that records prompts and pauses (usage limit) on the original 2nd prompt. */
@@ -2370,8 +2421,8 @@ test(
 
     // Resume with an EDITED script: agent 1 unchanged, agent 2's prompt changed.
     const editResumeScriptV2 = `export const meta = { name: 'edit_resume', description: 'two agents' }
-const a = await agent('FIRST', { label: 'first' })
-const b = await agent('SECOND-EDITED', { label: 'second' })
+const a = await agent('FIRST', { agentType: 'reviewer', label: 'first' })
+const b = await agent('SECOND-EDITED', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     const seenBeforeResume = seen.length;

@@ -26,9 +26,6 @@ export const WORKFLOW_SAVED_DIR = ".pi/workflows/saved";
 /** User-level saved workflows directory. */
 export const USER_WORKFLOW_SAVED_DIR = "~/.pi/workflows/saved";
 
-/** User-level model tiers config file, relative to the home directory. */
-export const MODEL_TIERS_FILE = ".pi/workflows/model-tiers.json";
-
 /** User-level workflow extension settings file, relative to the home directory. */
 export const WORKFLOW_SETTINGS_FILE = ".pi/workflows/settings.json";
 

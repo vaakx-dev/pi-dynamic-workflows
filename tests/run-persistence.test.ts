@@ -5,7 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { WORKFLOW_RUNS_DIR } from "../src/config.js";
 import { createRunPersistence, generateRunId, type PersistedRunState } from "../src/run-persistence.js";
-import { WorkflowManager } from "../src/workflow-manager.js";
+import { WorkflowManager as BaseWorkflowManager, type WorkflowManagerOptions } from "../src/workflow-manager.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+class WorkflowManager extends BaseWorkflowManager {
+  constructor(options: WorkflowManagerOptions = {}) {
+    super({ agentRegistry: testAgentRegistry(), ...options });
+  }
+}
+
 import { workflowProjectPaths } from "../src/workflow-paths.js";
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
@@ -75,6 +83,39 @@ test(
     assert.equal(loaded?.agents[0].label, "agent-1");
     assert.deepEqual(loaded?.logs, ["started", "phase: Scan"]);
     assert.deepEqual(loaded?.args, { key: "value" });
+  }),
+);
+
+test(
+  "createRunPersistence reads legacy agent records without new resolution metadata",
+  withTempCwd(async (cwd) => {
+    const persistence = createRunPersistence(cwd);
+    persistence.save({
+      runId: "legacy-agent",
+      workflowName: "legacy",
+      script: "export const meta = { name: 'legacy', description: 'legacy' }",
+      status: "completed",
+      phases: [],
+      agents: [
+        {
+          id: 1,
+          label: "old",
+          prompt: "old prompt",
+          status: "done",
+          agentType: "reviewer",
+          model: "provider/old-model",
+        },
+      ],
+      logs: [],
+      startedAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    });
+
+    const agent = persistence.load("legacy-agent")?.agents[0];
+    assert.equal(agent?.agentType, "reviewer");
+    assert.equal(agent?.model, "provider/old-model");
+    assert.equal(agent?.resolvedModel, undefined);
+    assert.equal(agent?.fingerprint, undefined);
   }),
 );
 
@@ -831,7 +872,8 @@ test(
       runId: "stale",
       workflowName: "w",
       status: "running",
-      script: "export const meta = { name: 'w', description: 'd' }\nawait agent('x',{label:'x'})\nreturn 1",
+      script:
+        "export const meta = { name: 'w', description: 'd' }\nawait agent('x',{agentType:'reviewer',label:'x'})\nreturn 1",
       phases: [],
       agents: [],
       logs: [],
@@ -854,7 +896,8 @@ test(
         runId: "legacy-live",
         workflowName: "w",
         status: "running",
-        script: "export const meta = { name: 'w', description: 'd' }\nawait agent('x',{label:'x'})\nreturn 1",
+        script:
+          "export const meta = { name: 'w', description: 'd' }\nawait agent('x',{agentType:'reviewer',label:'x'})\nreturn 1",
         phases: [],
         agents: [],
         logs: [],

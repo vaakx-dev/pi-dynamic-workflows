@@ -4,7 +4,12 @@ import { generateAdversarialReviewWorkflow, generateMultiPerspectiveWorkflow } f
 import { generateCodeReviewWorkflow } from "../src/code-review.js";
 import { generateCodebaseAuditWorkflow, generateDeepResearchWorkflow } from "../src/deep-research.js";
 import { createWebTools } from "../src/web-tools.js";
-import { parseWorkflowScript, runWorkflow } from "../src/workflow.js";
+import { runWorkflow as executeWorkflow, parseWorkflowScript, type WorkflowRunOptions } from "../src/workflow.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+function runWorkflow<T = unknown>(script: string, options: WorkflowRunOptions = {}) {
+  return executeWorkflow<T>(script, { agentRegistry: testAgentRegistry(), ...options });
+}
 
 // ─── Deep Research ──────────────────────────────────────────────────────────────
 

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentUsage } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
-import { type JournalEntry, runWorkflow } from "../src/workflow.js";
+import { runWorkflow as executeWorkflow, type JournalEntry, type WorkflowRunOptions } from "../src/workflow.js";
+import { testAgentDefinition, testAgentRegistry } from "./helpers/agents.js";
+
+function runWorkflow<T = unknown>(script: string, options: WorkflowRunOptions = {}) {
+  return executeWorkflow<T>(script, { agentRegistry: testAgentRegistry(), ...options });
+}
 
 /** Agent runner that counts real invocations and echoes a per-call result. */
 function countingAgent() {
@@ -37,8 +42,8 @@ function fakeAgent(usage: Partial<AgentUsage>, result: unknown = "ok") {
 }
 
 const twoAgentScript = `export const meta = { name: 'usage_demo', description: 'two agents' }
-const a = await agent('first', { label: 'a' })
-const b = await agent('second', { label: 'b' })
+const a = await agent('first', { agentType: 'reviewer', label: 'a' })
+const b = await agent('second', { agentType: 'reviewer', label: 'b' })
 return { a, b }`;
 
 function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
@@ -65,7 +70,7 @@ test("runWorkflow concurrency caps parallel agents", async () => {
     },
   };
   const script = `export const meta = { name: 'concurrency_cap', description: 'cap parallelism' }
-const xs = await parallel(['a','b','c','d'].map((p) => () => agent(p, { label: p })))
+const xs = await parallel(['a','b','c','d'].map((p) => () => agent(p, { agentType: 'reviewer', label: p })))
 return xs`;
 
   const run = runWorkflow(script, { agent: runner, concurrency: 2, persistLogs: false });
@@ -84,7 +89,7 @@ test("runWorkflow retries recoverable empty output then succeeds", async () => {
   const journal: JournalEntry[] = [];
   const result = await runWorkflow(
     `export const meta = { name: 'retry_success', description: 'retry success' }
-const a = await agent('work', { label: 'a' })
+const a = await agent('work', { agentType: 'reviewer', label: 'a' })
 return a`,
     {
       agent: {
@@ -111,7 +116,7 @@ test("runWorkflow returns null when recoverable retries are exhausted", async ()
   const journal: JournalEntry[] = [];
   const result = await runWorkflow(
     `export const meta = { name: 'retry_exhausted', description: 'retry exhausted' }
-const a = await agent('work', { label: 'a' })
+const a = await agent('work', { agentType: 'reviewer', label: 'a' })
 return a`,
     {
       agent: {
@@ -146,7 +151,7 @@ test("runWorkflow does not retry nonrecoverable errors", async () => {
   await assert.rejects(
     runWorkflow(
       `export const meta = { name: 'no_retry_nonrecoverable', description: 'nonrecoverable' }
-const a = await agent('work', { label: 'a' })
+const a = await agent('work', { agentType: 'reviewer', label: 'a' })
 return a`,
       {
         agent: {
@@ -168,7 +173,7 @@ test("per-agent retries override run-level retries", async () => {
   let calls = 0;
   const result = await runWorkflow(
     `export const meta = { name: 'agent_retry_override', description: 'override' }
-const a = await agent('work', { label: 'a', retries: 1 })
+const a = await agent('work', { agentType: 'reviewer', label: 'a', retries: 1 })
 return a`,
     {
       agent: {
@@ -201,21 +206,6 @@ test("runWorkflow accumulates real per-agent usage (incl. cost + cache tokens)",
   assert.equal(result.tokenUsage?.cacheWrite, 20, "cacheWrite accumulates across agents");
 });
 
-test("meta.model is parsed and routes as the default model for agents", async () => {
-  let seenModel: string | undefined;
-  const recorder = {
-    async run(_p: string, o: { model?: string }) {
-      seenModel = o.model;
-      return "ok";
-    },
-  };
-  const script = `export const meta = { name: 'm', description: 'd', model: 'meta/default-model' }
-await agent('x', { label: 'x' })
-return 1`;
-  await runWorkflow(script, { agent: recorder, persistLogs: false });
-  assert.equal(seenModel, "meta/default-model", "an agent with no model/tier/phase route uses meta.model");
-});
-
 test("runWorkflow falls back to an estimate when provider reports total === 0", async () => {
   const result = await runWorkflow(twoAgentScript, {
     agent: fakeAgent({ total: 0 }, "a result string"),
@@ -240,7 +230,7 @@ test("agents default to the first declared phase when the script omits phase()",
   };
   await runWorkflow(
     `export const meta = { name: 'p', description: 'd', phases: [{ title: 'Research' }, { title: 'Synthesize' }] }
-     await agent('a', { label: 'x' })
+     await agent('a', { agentType: 'reviewer', label: 'x' })
      return {}`,
     { agent: noop, persistLogs: false, onAgentStart: (e) => phases.push(e.phase) },
   );
@@ -257,7 +247,7 @@ test("explicit phase() overrides the default first phase", async () => {
   await runWorkflow(
     `export const meta = { name: 'p', description: 'd', phases: [{ title: 'A' }, { title: 'B' }] }
      phase('B')
-     await agent('a', { label: 'x' })
+     await agent('a', { agentType: 'reviewer', label: 'x' })
      return {}`,
     { agent: noop, persistLogs: false, onAgentStart: (e) => phases.push(e.phase) },
   );
@@ -273,71 +263,81 @@ test("no declared phases => agent phase stays undefined (no synthetic phase)", a
   };
   await runWorkflow(
     `export const meta = { name: 'p', description: 'd' }
-     await agent('a', { label: 'x' })
+     await agent('a', { agentType: 'reviewer', label: 'x' })
      return {}`,
     { agent: noop, persistLogs: false, onAgentStart: (e) => phases.push(e.phase) },
   );
   assert.deepEqual(phases, [undefined]);
 });
 
-test("runWorkflow routes models: explicit opts.model > phase model > default", async () => {
+test("runWorkflow model precedence is explicit override then definition model", async () => {
   const seen: Array<string | undefined> = [];
-  const capturingAgent = {
-    async run(_prompt: string, options: { model?: string; onUsage?: (u: AgentUsage) => void }) {
+  const registry = testAgentRegistry();
+  registry.set("reviewer", { ...testAgentDefinition(registry, "reviewer"), model: "definition/model" });
+  const runner = {
+    async run(_prompt: string, options: { model?: string }) {
       seen.push(options.model);
       return "ok";
     },
   };
+  const script = `export const meta = { name: 'routing', description: 'model routing' }
+await agent('explicit', { agentType: 'reviewer', label: 'explicit', model: 'call/model' })
+await agent('definition', { agentType: 'reviewer', label: 'definition' })
+return {}`;
 
-  const script = `export const meta = {
-    name: 'routing', description: 'model routing',
-    phases: [{ title: 'A', model: 'phase-a-model' }, { title: 'B' }]
-  }
-  phase('A')
-  await agent('explicit wins', { label: 'e', model: 'explicit-model' })
-  await agent('phase routed', { label: 'p' })
-  phase('B')
-  await agent('no model -> default', { label: 'n' })
-  return {}`;
-
-  await runWorkflow(script, { agent: capturingAgent, persistLogs: false });
-
-  assert.deepEqual(seen, ["explicit-model", "phase-a-model", undefined]);
+  await runWorkflow(script, { agent: runner, agentRegistry: registry, persistLogs: false });
+  assert.deepEqual(seen, ["call/model", "definition/model"]);
 });
 
-test("runWorkflow plumbs opts.tier through to the agent with correct precedence", async () => {
-  // Regression guard: tier must reach WorkflowAgent.run() (it was previously
-  // dropped). Precedence: explicit model > tier > phase model.
-  const seen: Array<{ model?: string; tier?: string }> = [];
-  const capturingAgent = {
-    async run(_prompt: string, options: { model?: string; tier?: string }) {
-      seen.push({ model: options.model, tier: options.tier });
-      return "ok";
-    },
-  };
-
-  const script = `export const meta = {
-    name: 'tier_routing', description: 'tier routing',
-    phases: [{ title: 'A', model: 'phase-a-model' }]
-  }
-  phase('A')
-  await agent('tier beats phase', { label: 't', tier: 'small' })
-  await agent('explicit beats tier', { label: 'e', tier: 'small', model: 'explicit-model' })
-  return {}`;
-
-  await runWorkflow(script, { agent: capturingAgent, persistLogs: false });
-
-  // 1) tier set, no explicit model: model is left undefined so the tier (resolved
-  //    inside run()) wins over the phase model; tier is forwarded.
-  assert.deepEqual(seen[0], { model: undefined, tier: "small" });
-  // 2) explicit model + tier: explicit model is forwarded and still wins.
-  assert.deepEqual(seen[1], { model: "explicit-model", tier: "small" });
+test("unknown agentType fails before the runner or model callback", async () => {
+  let calls = 0;
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'strict_role', description: 'strict role' }
+return await agent('work', { agentType: 'missing', model: 'provider/model' })`,
+      {
+        agent: {
+          async run() {
+            calls++;
+            return "unexpected";
+          },
+        },
+        persistLogs: false,
+      },
+    ),
+    /Unknown workflow agentType "missing"/,
+  );
+  assert.equal(calls, 0);
 });
 
 const resumeScript = `export const meta = { name: 'resume_demo', description: 'resume' }
-const a = await agent('first', { label: 'a' })
-const b = await agent('second', { label: 'b' })
+const a = await agent('first', { agentType: 'reviewer', label: 'a' })
+const b = await agent('second', { agentType: 'reviewer', label: 'b' })
 return { a, b }`;
+
+test("unknown agentType in parallel is non-recoverable and never reaches a runner", async () => {
+  let calls = 0;
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'strict_parallel_role', description: 'strict parallel role' }
+return await parallel([() => agent('work', { agentType: 'missing' })])`,
+      {
+        agent: {
+          async run() {
+            calls++;
+            return "unexpected";
+          },
+        },
+        persistLogs: false,
+      },
+    ),
+    (error: unknown) =>
+      error instanceof WorkflowError &&
+      error.code === WorkflowErrorCode.SCRIPT_VALIDATION_ERROR &&
+      /Unknown workflow agentType/.test(error.message),
+  );
+  assert.equal(calls, 0);
+});
 
 test("resume replays cached results without re-running agents", async () => {
   const first = countingAgent();
@@ -364,6 +364,153 @@ test("resume replays cached results without re-running agents", async () => {
   assert.equal(JSON.stringify(r2.result), JSON.stringify(r1.result));
 });
 
+test("resume preserves resolved model, reasoning, and tools for cached calls", async () => {
+  const journal: JournalEntry[] = [];
+  await runWorkflow(resumeScript, {
+    agent: {
+      async run(_prompt, options) {
+        options.onRuntimeResolved?.({ model: "provider/canonical", reasoning: "high", tools: ["read", "bash"] });
+        return "ok";
+      },
+    },
+    persistLogs: false,
+    onAgentJournal: (entry) => journal.push(entry),
+  });
+
+  const resolved: unknown[] = [];
+  await runWorkflow(resumeScript, {
+    agent: {
+      async run() {
+        throw new Error("must not run");
+      },
+    },
+    persistLogs: false,
+    resumeJournal: new Map(journal.map((entry) => [entry.index, entry])),
+    onAgentResolved: (event) => resolved.push(event),
+  });
+  assert.deepEqual(
+    resolved.map(({ resolvedModel, reasoning, tools }: any) => ({ resolvedModel, reasoning, tools })),
+    [
+      { resolvedModel: "provider/canonical", reasoning: "high", tools: ["read", "bash"] },
+      { resolvedModel: "provider/canonical", reasoning: "high", tools: ["read", "bash"] },
+    ],
+  );
+});
+
+test("cache identity covers role, fingerprint, model, tools, task, phase, explicit override, and schema", async () => {
+  const definition = (name: string) => ({
+    ...testAgentDefinition(testAgentRegistry(), name),
+    name,
+    model: "definition/model",
+    tools: ["read"],
+    fingerprint: "f".repeat(64),
+  });
+  const registry = new Map([
+    ["reviewer", definition("reviewer")],
+    ["finalizer", definition("finalizer")],
+  ]);
+  const baseScript = `export const meta = { name: 'identity', description: 'cache identity', phases: [{ title: 'A' }, { title: 'B' }] }
+phase('A')
+return await agent('task', { agentType: 'reviewer', label: 'identity' })`;
+  const variations: Array<{ name: string; script?: string; registry?: typeof registry }> = [
+    { name: "role", script: baseScript.replace("agentType: 'reviewer'", "agentType: 'finalizer'") },
+    {
+      name: "fingerprint",
+      registry: new Map(registry).set("reviewer", {
+        ...testAgentDefinition(registry, "reviewer"),
+        fingerprint: "e".repeat(64),
+      }),
+    },
+    {
+      name: "model",
+      registry: new Map(registry).set("reviewer", {
+        ...testAgentDefinition(registry, "reviewer"),
+        model: "other/model",
+      }),
+    },
+    {
+      name: "tools",
+      registry: new Map(registry).set("reviewer", {
+        ...testAgentDefinition(registry, "reviewer"),
+        tools: ["bash"],
+      }),
+    },
+    { name: "task", script: baseScript.replace("agent('task'", "agent('changed task'") },
+    { name: "phase", script: baseScript.replace("phase('A')", "phase('B')") },
+    {
+      name: "explicit override",
+      script: baseScript.replace("label: 'identity'", "label: 'identity', model: 'definition/model'"),
+    },
+    {
+      name: "schema",
+      script: baseScript.replace(
+        "label: 'identity'",
+        "label: 'identity', schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }",
+      ),
+    },
+  ];
+
+  for (const variation of variations) {
+    const journal: JournalEntry[] = [];
+    await runWorkflow(baseScript, {
+      agent: {
+        async run() {
+          return "base";
+        },
+      },
+      agentRegistry: registry,
+      persistLogs: false,
+      onAgentJournal: (entry) => journal.push(entry),
+    });
+    let calls = 0;
+    await runWorkflow(variation.script ?? baseScript, {
+      agent: {
+        async run(_prompt, options) {
+          calls++;
+          return options.schema ? { ok: true } : "live";
+        },
+      },
+      agentRegistry: variation.registry ?? registry,
+      persistLogs: false,
+      resumeJournal: new Map(journal.map((entry) => [entry.index, entry])),
+    });
+    assert.equal(calls, 1, `${variation.name} must invalidate the cached call`);
+  }
+});
+
+test("run snapshots the registry before the first call and shares it with nested workflows", async () => {
+  const registry = testAgentRegistry();
+  registry.set("reviewer", {
+    ...testAgentDefinition(registry, "reviewer"),
+    body: "snapshot body",
+    model: "snapshot/model",
+  });
+  const seen: Array<{ instructions?: string; model?: string }> = [];
+  const script = `export const meta = { name: 'snapshot', description: 'snapshot registry' }
+await agent('first', { agentType: 'reviewer' })
+await agent('second', { agentType: 'reviewer' })
+return true`;
+  await runWorkflow(script, {
+    agentRegistry: registry,
+    agent: {
+      async run(_prompt, options) {
+        seen.push({ instructions: options.instructions, model: options.model });
+        registry.set("reviewer", {
+          ...testAgentDefinition(registry, "reviewer"),
+          body: "mutated body",
+          model: "mutated/model",
+        });
+        return "ok";
+      },
+    },
+    persistLogs: false,
+  });
+  assert.deepEqual(seen, [
+    { instructions: "snapshot body", model: "snapshot/model" },
+    { instructions: "snapshot body", model: "snapshot/model" },
+  ]);
+});
+
 test("resume re-runs only the changed call (hash mismatch)", async () => {
   const first = countingAgent();
   const journal: JournalEntry[] = [];
@@ -384,9 +531,9 @@ test("resume re-runs only the changed call (hash mismatch)", async () => {
 });
 
 const threeCallScript = `export const meta = { name: 'prefix', description: 'prefix resume' }
-const a = await agent('A', { label: 'a' })
-const b = await agent('B', { label: 'b' })
-const c = await agent('C', { label: 'c' })
+const a = await agent('A', { agentType: 'reviewer', label: 'a' })
+const b = await agent('B', { agentType: 'reviewer', label: 'b' })
+const c = await agent('C', { agentType: 'reviewer', label: 'c' })
 return { a, b, c }`;
 
 test("resume re-runs the changed call AND everything after it (longest-unchanged-prefix)", async () => {
@@ -417,9 +564,9 @@ test("resume in parallel(): editing one thunk re-runs that index and every later
   // the same-or-later index, not just the single changed call.
   const script = (mid: string) => `export const meta = { name: 'par_prefix', description: 'parallel prefix' }
   const xs = await parallel([
-    () => agent('x', { label: 'p0' }),
-    () => agent('${mid}', { label: 'p1' }),
-    () => agent('x', { label: 'p2' }),
+    () => agent('x', { agentType: 'reviewer', label: 'p0' }),
+    () => agent('${mid}', { agentType: 'reviewer', label: 'p1' }),
+    () => agent('x', { agentType: 'reviewer', label: 'p2' }),
   ])
   return xs`;
   const first = countingAgent();
@@ -443,7 +590,7 @@ test("resume in parallel(): editing one thunk re-runs that index and every later
 test("callSeq is deterministic under parallel()", async () => {
   const journal: JournalEntry[] = [];
   const script = `export const meta = { name: 'par', description: 'parallel order' }
-  const xs = await parallel(['p0','p1','p2'].map((p) => () => agent(p, { label: p })))
+  const xs = await parallel(['p0','p1','p2'].map((p) => () => agent(p, { agentType: 'reviewer', label: p })))
   return xs`;
   await runWorkflow(script, {
     agent: countingAgent().runner,
@@ -458,10 +605,10 @@ test("callSeq is deterministic under parallel()", async () => {
 
 test("workflow() runs a nested saved workflow and shares the global agent counter", async () => {
   const child = `export const meta = { name: 'child', description: 'c' }
-const r = await agent('child task', { label: 'c' })
+const r = await agent('child task', { agentType: 'reviewer', label: 'c' })
 return { child: r }`;
   const parent = `export const meta = { name: 'parent', description: 'p' }
-const a = await agent('parent task', { label: 'p' })
+const a = await agent('parent task', { agentType: 'reviewer', label: 'p' })
 const nested = await workflow('child', { foo: 1 })
 return { a, nested }`;
 
@@ -478,7 +625,7 @@ return { a, nested }`;
 test("workflow() nesting is one level deep (second level throws)", async () => {
   const map: Record<string, string> = {
     gc: `export const meta = { name: 'gc', description: 'g' }
-await agent('gc', { label: 'g' })
+await agent('gc', { agentType: 'reviewer', label: 'g' })
 return 1`,
     child: `export const meta = { name: 'child', description: 'c' }
 await workflow('gc')
@@ -499,9 +646,9 @@ return { err }`;
 
 test("runWorkflow budget gates on accumulated tokens", async () => {
   const script = `export const meta = { name: 'budget_demo', description: 'budget' }
-const a = await agent('first', { label: 'a' })
+const a = await agent('first', { agentType: 'reviewer', label: 'a' })
 let second = null
-try { second = await agent('second', { label: 'b' }) } catch (e) { second = 'blocked' }
+try { second = await agent('second', { agentType: 'reviewer', label: 'b' }) } catch (e) { second = 'blocked' }
 return { a, second }`;
 
   const result = await runWorkflow<{ a: unknown; second: unknown }>(script, {
@@ -518,8 +665,8 @@ test("token budget exhaustion inside parallel() halts (non-recoverable, not swal
   // finishes); the agent() inside parallel() then hits the gate and must
   // propagate the non-recoverable error, not become a null in the result array.
   const script = `export const meta = { name: 'pb', description: 'budget in parallel' }
-await agent('warmup', { label: 'w' })
-const xs = await parallel([() => agent('x', { label: '1' })])
+await agent('warmup', { agentType: 'reviewer', label: 'w' })
+const xs = await parallel([() => agent('x', { agentType: 'reviewer', label: '1' })])
 return xs`;
   await assert.rejects(
     () =>
@@ -535,7 +682,7 @@ return xs`;
 
 test("non-recoverable agent-limit propagates out of pipeline() too", async () => {
   const script = `export const meta = { name: 'mp', description: 'agent limit pipeline' }
-const xs = await pipeline([0, 1, 2, 3], (n) => agent('x' + n, { label: 'p' + n }))
+const xs = await pipeline([0, 1, 2, 3], (n) => agent('x' + n, { agentType: 'reviewer', label: 'p' + n }))
 return xs`;
   await assert.rejects(
     () =>
@@ -553,11 +700,11 @@ test("phase sub-budget throws when a phase exceeds its ceiling (run total untouc
 phase('noisy', { budget: 100 })
 let blocked = false
 try {
-  await agent('a', { label: '1' })
-  await agent('b', { label: '2' })
+  await agent('a', { agentType: 'reviewer', label: '1' })
+  await agent('b', { agentType: 'reviewer', label: '2' })
 } catch (e) { blocked = (e && e.code) === 'TOKEN_BUDGET_EXHAUSTED' }
 phase('calm')
-const after = await agent('c', { label: '3' })
+const after = await agent('c', { agentType: 'reviewer', label: '3' })
 return { blocked, after }`;
   const res = await runWorkflow<{ blocked: boolean; after: unknown }>(script, {
     agent: fakeAgent({ input: 100, output: 0, total: 100, cost: 0 }),
@@ -571,7 +718,7 @@ test("maxAgents is enforced under a parallel() fan-out (atomic slot reservation)
   // Four agents fan out with maxAgents=2. With the synchronous slot reservation,
   // the 3rd agent() throws AGENT_LIMIT instead of all four passing the gate.
   const script = `export const meta = { name: 'ma', description: 'agent limit' }
-const xs = await parallel([0, 1, 2, 3].map((i) => () => agent('x' + i, { label: 'a' + i })))
+const xs = await parallel([0, 1, 2, 3].map((i) => () => agent('x' + i, { agentType: 'reviewer', label: 'a' + i })))
 return xs`;
   await assert.rejects(
     () =>
@@ -605,7 +752,7 @@ test("a fan-out past maxAgents cancels queued agents instead of draining the res
     },
   };
   const script = `export const meta = { name: 'c4', description: 'fanout cancel' }
-const xs = await parallel(Array.from({ length: ${fanout} }, (_, i) => () => agent('x' + i, { label: 'a' + i })))
+const xs = await parallel(Array.from({ length: ${fanout} }, (_, i) => () => agent('x' + i, { agentType: 'reviewer', label: 'a' + i })))
 return xs`;
   const run = runWorkflow(script, { agent: runner, maxAgents, concurrency, persistLogs: false });
   await assert.rejects(run, /limit/i);
@@ -637,9 +784,9 @@ test("sibling parallel() batches are isolated: one breaching maxAgents does not 
     },
   };
   const script = `export const meta = { name: 'sib', description: 'sibling isolation' }
-const batchA = parallel(Array.from({ length: 3 }, (_, i) => () => agent('a' + i, { label: 'a' + i })))
+const batchA = parallel(Array.from({ length: 3 }, (_, i) => () => agent('a' + i, { agentType: 'reviewer', label: 'a' + i })))
   .then((r) => ({ ok: true, r }), (e) => ({ ok: false, code: e && e.code }))
-const batchB = parallel(Array.from({ length: 40 }, (_, i) => () => agent('b' + i, { label: 'b' + i })))
+const batchB = parallel(Array.from({ length: 40 }, (_, i) => () => agent('b' + i, { agentType: 'reviewer', label: 'b' + i })))
   .then((r) => ({ ok: true, r }), (e) => ({ ok: false, code: e && e.code }))
 const [a, b] = await Promise.all([batchA, batchB])
 return { a, b }`;
@@ -668,8 +815,8 @@ test("a breach in a nested parallel() doesn't corrupt the outer batch's state", 
   };
   const script = `export const meta = { name: 'nest', description: 'nested fanout' }
 const xs = await parallel([
-  () => agent('outer-1', { label: 'outer-1' }),
-  () => parallel(Array.from({ length: 5 }, (_, i) => () => agent('inner' + i, { label: 'inner' + i }))),
+  () => agent('outer-1', { agentType: 'reviewer', label: 'outer-1' }),
+  () => parallel(Array.from({ length: 5 }, (_, i) => () => agent('inner' + i, { agentType: 'reviewer', label: 'inner' + i }))),
 ])
 return xs`;
   await assert.rejects(
@@ -682,7 +829,7 @@ return xs`;
 
 test("runWorkflow returns meta, logs, phases, and duration", async () => {
   const ONE_AGENT = `export const meta = { name: 'meta_test', description: 'check metadata' }
-const a = await agent('test', { label: 'a' })
+const a = await agent('test', { agentType: 'reviewer', label: 'a' })
 return a`;
 
   const result = await runWorkflow(ONE_AGENT, {
@@ -700,7 +847,7 @@ return a`;
 
 test("runWorkflow handles empty script without phases gracefully", async () => {
   const SIMPLE = `export const meta = { name: 'simple', description: 'simple' }
-const a = await agent('hello', { label: 'greeter' })
+const a = await agent('hello', { agentType: 'reviewer', label: 'greeter' })
 return a`;
 
   const result = await runWorkflow(SIMPLE, {
@@ -713,7 +860,7 @@ return a`;
 
 test("runWorkflow parallel returns results in input order", async () => {
   const script = `export const meta = { name: 'parallel_order', description: 'check order' }
-const results = await parallel([1,2,3].map(n => () => agent('task ' + n, { label: 't' + n })))
+const results = await parallel([1,2,3].map(n => () => agent('task ' + n, { agentType: 'reviewer', label: 't' + n })))
 return results`;
 
   let callIndex = 0;
@@ -730,7 +877,11 @@ return results`;
 
 test("runWorkflow pipeline stages in order", async () => {
   const script = `export const meta = { name: 'pipeline_test', description: 'test pipeline' }
-const results = await pipeline(['a','b'], item => agent('stage1 ' + item), result => agent('stage2 ' + result))
+const results = await pipeline(
+  ['a','b'],
+  item => agent('stage1 ' + item, { agentType: 'reviewer' }),
+  result => agent('stage2 ' + result, { agentType: 'reviewer' }),
+)
 return results`;
 
   const log: string[] = [];
@@ -748,8 +899,8 @@ return results`;
 
 test("runWorkflow agent with different labels", async () => {
   const script = `export const meta = { name: 'label_test', description: 'labels' }
-const a = await agent('task1', { label: 'worker-1' })
-const b = await agent('task2', { label: 'worker-2' })
+const a = await agent('task1', { agentType: 'reviewer', label: 'worker-1' })
+const b = await agent('task2', { agentType: 'reviewer', label: 'worker-2' })
 return { a, b }`;
 
   const seenLabels: string[] = [];
@@ -765,9 +916,9 @@ return { a, b }`;
 test("runWorkflow with phases assignment to agents", async () => {
   const script = `export const meta = { name: 'phase_test', description: 'phases', phases: [{ title: 'Phase1' }, { title: 'Phase2' }] }
 phase('Phase1')
-const a = await agent('phase1 work', { label: 'p1' })
+const a = await agent('phase1 work', { agentType: 'reviewer', label: 'p1' })
 phase('Phase2')
-const b = await agent('phase2 work', { label: 'p2' })
+const b = await agent('phase2 work', { agentType: 'reviewer', label: 'p2' })
 return { a, b }`;
 
   const phases: string[] = [];
@@ -865,7 +1016,7 @@ catch(e) { return { error: String(e) } }`;
 
 test("runWorkflow returns empty logs array when nothing logged", async () => {
   const script = `export const meta = { name: 'no_log', description: 'no logs' }
-await agent('silent', { label: 's' })
+await agent('silent', { agentType: 'reviewer', label: 's' })
 return 1`;
 
   const result = await runWorkflow(script, {
@@ -888,7 +1039,7 @@ function probe(expr: string): Promise<{ result: { err: string | null; val: unkno
   const script = `export const meta = { name: 'det', description: 'determinism' }
 let err = null, val = null
 try { val = ${expr} } catch (e) { err = String((e && e.message) || e) }
-await agent('noop', { label: 'x' })
+await agent('noop', { agentType: 'reviewer', label: 'x' })
 return { err, val }`;
   return runWorkflow(script, { agent: noopAgent, persistLogs: false });
 }
@@ -898,7 +1049,7 @@ test("parse-time guard rejects literal Date.now / Math.random / new Date()", asy
     await assert.rejects(
       () =>
         runWorkflow(
-          `export const meta = { name: 'lit', description: 'd' }\nconst v = ${expr}\nawait agent('x', { label: 'x' })\nreturn v`,
+          `export const meta = { name: 'lit', description: 'd' }\nconst v = ${expr}\nawait agent('x', { agentType: 'reviewer', label: 'x' })\nreturn v`,
           { agent: noopAgent, persistLogs: false },
         ),
       /deterministic|unavailable/i,
@@ -934,7 +1085,7 @@ try { escaped = ({}).constructor.constructor('return Da' + 'te.now()')() } catch
 const arr = [1, 2, 3].map((x) => x * 2)
 const j = JSON.stringify({ a: 1 })
 const s = [...new Set([1, 1, 2])]
-await agent('noop', { label: 'x' })
+await agent('noop', { agentType: 'reviewer', label: 'x' })
 return { escaped, arr, j, s }`;
   const r = await runWorkflow<{ escaped: string; arr: number[]; j: string; s: number[] }>(script, {
     agent: noopAgent,

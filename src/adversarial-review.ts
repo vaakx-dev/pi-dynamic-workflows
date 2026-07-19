@@ -38,7 +38,7 @@ const threshold = (args && args.threshold) || 0.5
 phase('Investigate')
 const investigation = await agent(
   'Investigate the following and list concrete, individually-checkable findings:\\n' + task,
-  { label: 'investigate', schema: { type: 'object', properties: { findings: { type: 'array', items: { type: 'string' } } }, required: ['findings'] } }
+  { agentType: 'reviewer', label: 'investigate', schema: { type: 'object', properties: { findings: { type: 'array', items: { type: 'string' } } }, required: ['findings'] } }
 )
 const findings = investigation.findings || []
 
@@ -49,7 +49,7 @@ const judged = await parallel(findings.map((f, i) => () =>
       'You are a skeptical reviewer. Try to REFUTE this finding for the task below. ' +
       'Default to real=false when uncertain. Investigate with the available tools if needed.\\n\\n' +
       'TASK: ' + task + '\\nFINDING: ' + f,
-      { label: 'refute ' + (i + 1) + '.' + (r + 1), schema: { type: 'object', properties: { real: { type: 'boolean' }, reason: { type: 'string' } }, required: ['real'] } }
+      { agentType: 'reviewer', label: 'refute ' + (i + 1) + '.' + (r + 1), schema: { type: 'object', properties: { real: { type: 'boolean' }, reason: { type: 'string' } }, required: ['real'] } }
     )
   )).then((votes) => {
     const valid = votes.filter(Boolean)
@@ -66,7 +66,7 @@ const report = await agent(
   'Write a final review report. Include ONLY the findings that survived adversarial review (listed below), ' +
   'each with a short justification. Note how many were discarded.\\n\\n' +
   'SURVIVING FINDINGS JSON:\\n' + JSON.stringify(survivors),
-  { label: 'consensus' }
+  { agentType: 'finalizer', label: 'consensus' }
 )
 
 return { total: findings.length, survivors, report }`;
@@ -79,7 +79,7 @@ export function generateMultiPerspectiveWorkflow(topic: string, perspectives: st
   const perspectiveAgents = perspectives
     .map(
       (p, _i) =>
-        `  () => agent('Analyze from ${p} perspective: ' + topic, { label: '${p.toLowerCase().replace(/\\s+/g, "-")}' }),`,
+        `  () => agent('Analyze from ${p} perspective: ' + topic, { agentType: 'reviewer', label: '${p.toLowerCase().replace(/\\s+/g, "-")}' }),`,
     )
     .join("\n");
 
@@ -103,7 +103,7 @@ const synthesis = await agent(
   'Synthesize these different perspectives into a balanced analysis:\\n' +
   'Analyses: ' + JSON.stringify(analyses) + '\\n' +
   'Topic: ' + topic,
-  { label: 'synthesizer' }
+  { agentType: 'finalizer', label: 'synthesizer' }
 );
 
 return { analyses, synthesis };`;

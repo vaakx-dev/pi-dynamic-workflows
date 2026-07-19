@@ -31,10 +31,17 @@ export interface PersistedAgentState {
   tokens?: number;
   /** Per-agent token usage breakdown, when the provider reported one. */
   tokenUsage?: AgentUsage;
-  /** The model this agent ran on (provider/id), when known. */
+  /** Legacy display model. New records also carry requestedModel/resolvedModel. */
   model?: string;
   agentType?: string;
-  role?: string;
+  source?: "project" | "user";
+  path?: string;
+  fingerprint?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
+  reasoning?: string;
+  tools?: string[];
+  explicitModelOverride?: boolean;
   attempt?: number;
   provenance?: "live" | "cached";
   activity?: NormalizedAgentActivity;
@@ -76,7 +83,12 @@ export interface PersistedRunState {
     cacheWrite?: number;
   };
   /** Cached agent results for resume, keyed by deterministic call index. */
-  journal?: Array<{ index: number; hash: string; result: unknown }>;
+  journal?: Array<{
+    index: number;
+    hash: string;
+    result: unknown;
+    runtime?: { resolvedModel?: string; reasoning?: string; tools: string[] };
+  }>;
   /**
    * Opt-out of auto-resume for this run (default true, i.e. eligible unless
    * explicitly set to false via ExecOptions.autoResume). Set once at run start

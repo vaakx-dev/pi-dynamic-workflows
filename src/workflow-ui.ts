@@ -252,7 +252,14 @@ function persistedToSnapshot(p: PersistedRunState): WorkflowSnapshot {
       tokenUsage: a.tokenUsage,
       model: a.model,
       agentType: a.agentType,
-      role: a.role,
+      source: a.source,
+      path: a.path,
+      fingerprint: a.fingerprint,
+      requestedModel: a.requestedModel,
+      resolvedModel: a.resolvedModel,
+      reasoning: a.reasoning,
+      tools: a.tools,
+      explicitModelOverride: a.explicitModelOverride,
       attempt: a.attempt,
       provenance: a.provenance,
       startedAt: a.startedAt,
@@ -868,8 +875,12 @@ export function renderNavigator(
       const body: string[] = [];
       body.push(dim("Status: ") + (a.status ?? ""));
       if (a.provenance) body.push(dim("Provenance: ") + a.provenance);
-      if (a.agentType || a.role) body.push(dim("Role: ") + (a.role ?? a.agentType ?? ""));
-      if (a.model) body.push(dim("Model: ") + (shortModel(a.model) ?? ""));
+      if (a.agentType) body.push(dim("Role: ") + a.agentType);
+      if (a.source && a.path) body.push(`${dim("Definition: ")}${a.source} ${a.path}`);
+      if (a.requestedModel) body.push(dim("Requested model: ") + a.requestedModel);
+      if (a.resolvedModel ?? a.model) body.push(dim("Model: ") + (shortModel(a.resolvedModel ?? a.model) ?? ""));
+      if (a.reasoning) body.push(dim("Reasoning: ") + a.reasoning);
+      if (a.tools?.length) body.push(dim("Tools: ") + a.tools.join(", "));
       if (a.attempt) body.push(dim("Retry attempt: ") + String(a.attempt));
       if (a.tokenUsageQuality) body.push(dim("Usage: ") + a.tokenUsageQuality);
       if (a.startedAt) body.push(dim("Started: ") + a.startedAt);

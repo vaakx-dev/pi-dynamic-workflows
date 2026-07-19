@@ -10,14 +10,13 @@ import type { AgentHistoryEntry } from "./agent-history.js";
 import {
   type AgentDefinition,
   type AgentRegistry,
-  agentDefinitionKey,
   loadAgentRegistry,
   resolveAgentType,
+  snapshotAgentRegistry,
 } from "./agent-registry.js";
 import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_RETRIES, MAX_AGENTS_PER_RUN, MAX_CONCURRENCY } from "./config.js";
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js";
 import { createWorkflowLogger } from "./logger.js";
-import { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
 import { createAgentStoreTools, SharedStore } from "./shared-store.js";
 import type { NormalizedAgentActivity } from "./workflow-telemetry.js";
 import { createWorktree, removeWorktree, type Worktree } from "./worktree.js";
@@ -46,23 +45,22 @@ const fanoutScope = new AsyncLocalStorage<{ cancelled: boolean }>();
 export interface WorkflowMetaPhase {
   title: string;
   detail?: string;
-  model?: string;
 }
 
 export interface WorkflowMeta {
   name: string;
   description: string;
   phases?: WorkflowMetaPhase[];
-  /** Default model for agents whose phase has no route and that set no model/tier. */
-  model?: string;
 }
 
 /** One cached agent() result, keyed by its deterministic call index. */
 export interface JournalEntry {
   index: number;
-  /** sha256 of the call's identity (prompt + model + phase + agentType + schema). */
+  /** sha256 of the role, definition, model, tools, task, phase, override, and schema identity. */
   hash: string;
   result: unknown;
+  /** Resolved runtime provenance retained when this entry is replayed. */
+  runtime?: { resolvedModel?: string; reasoning?: string; tools: string[] };
   /**
    * Per-agent write delta (keys set by this agent) for additive replay on resume.
    * Replaces the former full-map snapshot to fix parallel-agent ordering: applying
@@ -92,9 +90,8 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   mainModel?: string;
   /**
    * Named subagent definitions for `agent({ agentType })`. Snapshotted once per
-   * run for determinism. Defaults to scanning `.pi/agents` (project) +
-   * `~/.pi/agent/agents` (user, primary) + `~/.pi/agents` (user, deprecated
-   * fallback). Injectable for tests.
+   * run for determinism. Defaults to the nearest ancestor `.pi/agents` directory
+   * overriding `~/.pi/agent/agents`. Injectable for tests.
    */
   agentRegistry?: AgentRegistry;
   concurrency?: number;
@@ -141,8 +138,15 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     phase?: string;
     prompt: string;
     model?: string;
-    agentType?: string;
-    role?: string;
+    agentType: string;
+    source: "project" | "user";
+    path: string;
+    fingerprint: string;
+    requestedModel?: string;
+    resolvedModel?: string;
+    reasoning?: string;
+    tools?: string[];
+    explicitModelOverride: boolean;
   }) => void;
   onAgentStart?: (event: {
     callId: string;
@@ -152,8 +156,14 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
     phase?: string;
     prompt: string;
     model?: string;
-    agentType?: string;
-    role?: string;
+    agentType: string;
+  }) => void;
+  onAgentResolved?: (event: {
+    callId: string;
+    callIndex: number;
+    resolvedModel?: string;
+    reasoning?: string;
+    tools: string[];
   }) => void;
   onAgentAttempt?: (event: {
     callId: string;
@@ -225,22 +235,14 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
    * analysis). When omitted, the session's main model is used.
    */
   model?: string;
-  /**
-   * Coarse model tier ("small" | "medium" | "big"), resolved from the user's
-   * model-tiers config (see /workflows-models). An explicit `model` takes
-   * precedence; a tier takes precedence over the phase model. When the tier has
-   * no configured entry it falls back to the session's main model.
-   */
-  tier?: string;
   isolation?: "worktree";
   /**
-   * Name of a registered subagent definition (`.pi/agents/<name>.md`, project >
-   * user). Binds that definition's tool allow/denylist, model, and body prompt
-   * to this agent. An explicit `model` overrides the definition's model; the
-   * definition's model overrides `tier`/phase. An unknown name logs a warning
-   * and falls back to default tools/model (with the name as a prose hint).
+   * Required name of a registered subagent definition. The nearest ancestor
+   * `.pi/agents` definition overrides the same name in `~/.pi/agent/agents`.
+   * An explicit `model` overrides the definition model. Unknown names fail
+   * before a subagent session or model call starts.
    */
-  agentType?: string;
+  agentType: string;
   /** Override timeout for this specific agent. null means no hard timeout. */
   timeoutMs?: number | null;
   /** Retry attempts after a recoverable failure for this specific agent. */
@@ -326,15 +328,14 @@ export async function runWorkflow<T = unknown>(
 ): Promise<WorkflowRunResult<T>> {
   const started = Date.now();
   const { meta, body } = parseWorkflowScript(script);
-  // Per-phase model routing from meta.phases[].model, with meta.model as the default.
-  const routingConfig = parseModelRoutingFromMeta(meta.phases, meta.model);
   const maxAgents = options.maxAgents ?? MAX_AGENTS_PER_RUN;
   const agentTimeoutMs = options.agentTimeoutMs !== undefined ? options.agentTimeoutMs : DEFAULT_AGENT_TIMEOUT_MS;
   const runId = options.runId ?? `run-${started.toString(36)}`;
   const baseCwd = options.cwd ?? process.cwd();
-  // Snapshot the agentType registry ONCE per run so two agent() calls can't
-  // observe a mid-run edit (determinism); a later resume re-reads it.
-  const agentRegistry = options.agentRegistry ?? loadAgentRegistry(baseCwd);
+  // Snapshot definitions once at run start. Nested workflows receive this same
+  // snapshot, so filesystem edits and injected registry mutations are invisible
+  // until a later top-level run or resume.
+  const agentRegistry = snapshotAgentRegistry(options.agentRegistry ?? loadAgentRegistry(baseCwd));
 
   // Initialize logger
   const logger = createWorkflowLogger({
@@ -412,7 +413,7 @@ export async function runWorkflow<T = unknown>(
     }
   };
 
-  const agent = async (prompt: string, agentOptions: AgentOptions = {}) => {
+  const agent = async (prompt: string, agentOptions: AgentOptions = {} as AgentOptions) => {
     throwIfAborted();
 
     // Capture the enclosing parallel()/pipeline() fan-out's cancellation batch
@@ -462,28 +463,48 @@ export async function runWorkflow<T = unknown>(
 
     const requestedLabel = agentOptions.label?.trim();
 
-    // Resolve a named agentType to its bound definition (tools/model/prompt).
-    const agentDef = resolveAgentType(agentOptions.agentType, agentRegistry);
-    if (agentOptions.agentType && !agentDef) {
-      log(`unknown agentType "${agentOptions.agentType}"; using default tools/model`);
+    const configurationError = (message: string) =>
+      new WorkflowError(message, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false });
+    const rawAgentOptions = agentOptions as AgentOptions & { agent?: unknown; tier?: unknown };
+    if (rawAgentOptions.agent !== undefined) {
+      throw configurationError('agent() option "agent" is unsupported; migrate it to "agentType"');
+    }
+    if (rawAgentOptions.tier !== undefined) {
+      throw configurationError('agent() option "tier" is unsupported; migrate model routing to "agentType"');
+    }
+    if (typeof agentOptions.agentType !== "string" || !agentOptions.agentType.trim()) {
+      throw configurationError("agent() requires opts.agentType naming a registered agent definition");
     }
 
-    // Model precedence: explicit agentOptions.model > agentType.model > tier > phase model.
-    // The "explicit-level" model is opts.model, else the definition's model — either
-    // beats tier/phase. When only a tier is set, pass undefined here so the tier (not
-    // the phase model) decides inside WorkflowAgent.run().
-    const explicitModel = agentOptions.model ?? agentDef?.model;
-    const modelSpec =
-      explicitModel ?? (agentOptions.tier ? undefined : resolveModelForPhase(assignedPhase, routingConfig));
-    // For display in /workflows: the model this agent runs on — its explicit/phase
-    // spec, else the session's main model. The real resolved id overrides this via
-    // onModelResolved once the subagent session is created.
+    // Strict role resolution happens before any queue event, session creation,
+    // model resolution, or provider call.
+    const agentType = agentOptions.agentType.trim();
+    let agentDef: AgentDefinition;
+    try {
+      agentDef = resolveAgentType(agentType, agentRegistry);
+    } catch (error) {
+      throw configurationError(error instanceof Error ? error.message : String(error));
+    }
+    const modelSpec = agentOptions.model ?? agentDef.model;
+    const explicitModelOverride = agentOptions.model !== undefined;
+    const definitionTools = agentDef.tools ? [...agentDef.tools] : undefined;
+    const runtimeToolNames = options.tools?.map((tool) => tool.name);
     let displayModel = modelSpec ?? options.mainModel;
 
     // Deterministic resume key: assigned at lexical call time, before the limiter,
     // so parallel()/pipeline() fan-out is reproducible for a fixed script.
     const callIndex = state.callSeq++;
-    const callHash = hashAgentCall(prompt, modelSpec, assignedPhase, agentOptions, agentDefinitionKey(agentDef));
+    const callHash = hashAgentCall({
+      task: prompt,
+      phase: assignedPhase,
+      agentType,
+      fingerprint: agentDef.fingerprint,
+      model: modelSpec ?? options.mainModel,
+      reasoning: options.mainReasoning,
+      tools: { definition: definitionTools ?? null, runtime: runtimeToolNames ?? null },
+      explicitModelOverride: agentOptions.model ?? null,
+      schema: agentOptions.schema ?? null,
+    });
     // Store delta key: callIndex alone is NOT run-unique. A nested workflow()
     // call (see workflowFn below) shares this run's SharedStore instance but
     // restarts its own callSeq at 0, so a parent agent and a concurrently
@@ -509,8 +530,15 @@ export async function runWorkflow<T = unknown>(
       phase: assignedPhase,
       prompt,
       model: displayModel,
-      agentType: agentOptions.agentType,
-      role: agentOptions.agentType,
+      agentType,
+      source: agentDef.source,
+      path: agentDef.path,
+      fingerprint: agentDef.fingerprint,
+      requestedModel: modelSpec,
+      resolvedModel: undefined,
+      reasoning: options.mainReasoning,
+      tools: definitionTools,
+      explicitModelOverride,
     };
     options.onAgentQueued?.(queuedEvent);
 
@@ -523,6 +551,10 @@ export async function runWorkflow<T = unknown>(
     const hashMatches = cached != null && cached.hash === callHash;
     const cachedEmptyOutput = hashMatches && isEmptyTextAgentResult(cached.result, agentOptions.schema);
     if (hashMatches && !cachedEmptyOutput && callIndex < state.firstMiss) {
+      if (cached.runtime) {
+        displayModel = cached.runtime.resolvedModel ?? displayModel;
+        options.onAgentResolved?.({ callId, callIndex, ...cached.runtime });
+      }
       options.onAgentEnd?.({
         ...queuedEvent,
         result: cached.result,
@@ -547,13 +579,9 @@ export async function runWorkflow<T = unknown>(
 
       options.onAgentStart?.({ ...queuedEvent, attempt: 1 });
 
-      // Optional per-agent worktree isolation (deterministic name -> stable resume keys).
-      // Precedence: explicit call-site isolation > agentDef isolation.
-      // Note: passing { isolation: undefined } falls through ?? to the def's value — there
-      // is no sentinel to suppress a def's isolation at the call site. Remove the agentType
-      // or override with a def that has no isolation field if opt-out is needed.
+      // Optional per-call worktree isolation (deterministic name -> stable resume keys).
       let worktree: Worktree | undefined;
-      const resolvedIsolation = agentOptions.isolation ?? agentDef?.isolation;
+      const resolvedIsolation = agentOptions.isolation ?? undefined;
       if (resolvedIsolation === "worktree") {
         worktree = await createWorktree(baseCwd, `${runId}-${callIndex}-${label}`);
         if (!worktree.isolated) log(`isolation ignored for "${label}" (${worktree.reason})`);
@@ -564,6 +592,7 @@ export async function runWorkflow<T = unknown>(
       // estimate when the provider reports no usage (total === 0). Usage is reset
       // per retry attempt so a failed attempt does not double-count the next one.
       let usage: AgentUsage | undefined;
+      let runtime: JournalEntry["runtime"];
       const recordTokens = (result: unknown): number => {
         const tokens = usage && usage.total > 0 ? usage.total : estimateTokens(result) + estimateTokens(prompt);
         if (usage) {
@@ -610,12 +639,10 @@ export async function runWorkflow<T = unknown>(
                 sessionName: `workflow:${runId} ${label}`,
                 schema: agentOptions.schema,
                 signal: options.signal,
-                instructions: buildAgentInstructions(assignedPhase, agentOptions, agentDef, resolvedIsolation),
+                instructions: buildAgentInstructions(assignedPhase, agentDef, resolvedIsolation),
                 model: modelSpec,
-                tier: agentOptions.tier,
                 modelRegistry: options.modelRegistry,
-                toolNames: agentDef?.tools,
-                disallowedToolNames: agentDef?.disallowedTools,
+                toolNames: agentDef.tools,
                 // Per-agent store tools track this agent's writes by the
                 // run-unique deltaKey so the delta can be journaled and replayed
                 // correctly on resume, even when a nested workflow() run shares
@@ -624,6 +651,15 @@ export async function runWorkflow<T = unknown>(
                 cwd: runCwd,
                 onModelResolved: (id: string) => {
                   displayModel = id;
+                },
+                onRuntimeResolved: (resolution) => {
+                  displayModel = resolution.model ?? displayModel;
+                  runtime = {
+                    resolvedModel: resolution.model,
+                    reasoning: resolution.reasoning,
+                    tools: [...resolution.tools],
+                  };
+                  options.onAgentResolved?.({ callId, callIndex, ...runtime });
                 },
                 onModelFallback: (spec: string) => {
                   // Make the silent degrade visible in /workflows, not just console.
@@ -656,6 +692,7 @@ export async function runWorkflow<T = unknown>(
               index: callIndex,
               hash: callHash,
               result,
+              runtime,
               storeDelta: store.commitDelta(deltaKey),
             });
             options.onAgentEnd?.({
@@ -810,6 +847,7 @@ export async function runWorkflow<T = unknown>(
         ...options,
         args: childArgs,
         sharedRuntime: shared,
+        agentRegistry,
         // Propagate the parent's store so nested agents share the same key-value space.
         sharedStore: store,
         // A nested run is its own script; never reuse the parent's resume journal.
@@ -848,7 +886,7 @@ export async function runWorkflow<T = unknown>(
           (_v, i) => () =>
             agent(
               `Adversarially review whether the following is REAL/correct. Try to refute it; default to real=false if unsure.${lenses.length ? ` Focus lens: ${lenses[i % lenses.length]}.` : ""}\n\n${claim}`,
-              { label: `verify ${i + 1}`, schema: VERIFY_SCHEMA },
+              { agentType: "reviewer", label: `verify ${i + 1}`, schema: VERIFY_SCHEMA },
             ),
         ),
       )
@@ -877,6 +915,7 @@ export async function runWorkflow<T = unknown>(
                   agent(
                     `Score this candidate from 0 to 1 on: ${rubric}. Reply with the score.\n\nCandidate:\n${text}`,
                     {
+                      agentType: "reviewer",
                       label: `judge ${idx + 1}.${j + 1}`,
                       schema: JUDGE_SCHEMA,
                     },
@@ -941,7 +980,7 @@ export async function runWorkflow<T = unknown>(
   const completenessCheck = (taskArgs: unknown, results: unknown) =>
     agent(
       `Given the task and the results gathered so far, list what is still MISSING (modalities not covered, claims unverified, gaps). Be specific and concise.\n\nTask:\n${JSON.stringify(taskArgs)}\n\nResults so far:\n${JSON.stringify(results).slice(0, 4000)}`,
-      { label: "completeness critic", schema: COMPLETENESS_SCHEMA },
+      { agentType: "reviewer", label: "completeness critic", schema: COMPLETENESS_SCHEMA },
     );
 
   // Thin bounded-retry / validation-gate combinators. Sugar over the for-loop +
@@ -1131,6 +1170,7 @@ export function parseWorkflowScript(script: string): { meta: WorkflowMeta; body:
 
   const meta = evaluateLiteral(declarator.init, "meta");
   validateMeta(meta);
+  validateAgentRouting(ast);
 
   return {
     meta,
@@ -1183,21 +1223,62 @@ function propertyKey(node: AnyNode, path: string): string {
   throw new Error(`unsupported key type in ${path}: ${node.type}`);
 }
 
+function routingMigrationError(location: string): Error {
+  return new Error(`${location} model routing is unsupported; migrate each agent() call to opts.agentType`);
+}
+
 function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
   if (!meta || typeof meta !== "object") throw new Error("meta must be an object");
+  const raw = meta as Record<string, unknown>;
+  if ("model" in raw) throw routingMigrationError("meta.model");
+  const customFields = Object.keys(raw).filter((field) => !["name", "description", "phases"].includes(field));
+  if (customFields.length) throw new Error(`unsupported meta field: ${customFields.join(", ")}`);
+
   const value = meta as WorkflowMeta;
   if (typeof value.name !== "string" || !value.name.trim()) throw new Error("meta.name must be a non-empty string");
   if (typeof value.description !== "string" || !value.description.trim())
     throw new Error("meta.description must be a non-empty string");
-  if (value.model !== undefined && typeof value.model !== "string") throw new Error("meta.model must be a string");
   if (value.phases !== undefined) {
     if (!Array.isArray(value.phases)) throw new Error("meta.phases must be an array");
     for (const phase of value.phases) {
-      if (!phase || typeof phase !== "object" || typeof (phase as WorkflowMetaPhase).title !== "string") {
+      if (!phase || typeof phase !== "object" || typeof phase.title !== "string") {
         throw new Error("each meta phase must have a title string");
+      }
+      const rawPhase = phase as unknown as Record<string, unknown>;
+      if ("model" in rawPhase) throw routingMigrationError("meta.phases[].model");
+      const customPhaseFields = Object.keys(rawPhase).filter((field) => !["title", "detail"].includes(field));
+      if (customPhaseFields.length) throw new Error(`unsupported meta phase field: ${customPhaseFields.join(", ")}`);
+      if (phase.detail !== undefined && typeof phase.detail !== "string") {
+        throw new Error("meta phase detail must be a string");
       }
     }
   }
+}
+
+function validateAgentRouting(ast: AnyNode): void {
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    const node = value as AnyNode;
+    if (node.type === "CallExpression" && node.callee?.type === "Identifier" && node.callee.name === "agent") {
+      const options = node.arguments?.[1] as AnyNode | undefined;
+      if (options?.type === "ObjectExpression") {
+        for (const property of options.properties as AnyNode[]) {
+          if (property.type !== "Property" || property.computed) continue;
+          const key = propertyKey(property.key as AnyNode, "agent options");
+          if (key === "tier") throw routingMigrationError("opts.tier");
+          if (key === "agent") throw new Error("opts.agent is unsupported; migrate it to opts.agentType");
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (key !== "parent") visit(child);
+    }
+  };
+  visit(ast);
 }
 
 function createLimiter(limit: number) {
@@ -1232,43 +1313,31 @@ function hashCheckpoint(promptText: string, options: CheckpointOptions): string 
   return createHash("sha256").update(identity).digest("hex");
 }
 
-function hashAgentCall(
-  prompt: string,
-  model: string | undefined,
-  phase: string | undefined,
-  options: AgentOptions,
-  agentDefKey: string | null,
-): string {
-  const identity = JSON.stringify({
-    prompt,
-    model: model ?? null,
-    tier: options.tier ?? null,
-    phase: phase ?? null,
-    agentType: options.agentType ?? null,
-    // Resolved definition (tools/model/prompt) so editing an agent .md invalidates
-    // this call's cached result on a later resume.
-    agentDef: agentDefKey,
-    schema: options.schema ?? null,
-  });
-  return createHash("sha256").update(identity).digest("hex");
+interface AgentCallIdentity {
+  agentType: string;
+  fingerprint: string;
+  model?: string;
+  reasoning?: string;
+  tools: { definition: string[] | null; runtime: string[] | null };
+  task: string;
+  phase?: string;
+  explicitModelOverride: string | null;
+  schema: TSchema | null;
+}
+
+function hashAgentCall(identity: AgentCallIdentity): string {
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
 }
 
 function buildAgentInstructions(
   phase: string | undefined,
-  options: AgentOptions,
-  def: AgentDefinition | undefined,
+  def: AgentDefinition,
   resolvedIsolation?: "worktree",
 ): string | undefined {
   const lines: string[] = [];
-  // A resolved agentType binds a real role prompt (the definition body). Only
-  // fall back to the prose hint when the agentType named no known definition.
-  if (def?.prompt) lines.push(def.prompt);
-  else if (options.agentType) lines.push(`Act as workflow subagent type: ${options.agentType}`);
+  if (def.body) lines.push(def.body);
   if (phase) lines.push(`Workflow phase: ${phase}`);
-  // Use resolvedIsolation so the annotation fires whether isolation came from
-  // the call site or from the agentDef's isolation field.
   if (resolvedIsolation) lines.push(`Requested isolation: ${resolvedIsolation}`);
-  // Note: options.model is applied for real via the session, not injected as prose.
   return lines.length ? lines.join("\n\n") : undefined;
 }
 

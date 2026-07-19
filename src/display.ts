@@ -25,10 +25,17 @@ export interface WorkflowAgentSnapshot {
   tokens?: number;
   /** Per-agent token usage breakdown (fresh input+output vs cached), when known. */
   tokenUsage?: AgentUsage;
-  /** The model this agent ran on (provider/id), when known. */
+  /** Legacy display model. New records also carry requestedModel/resolvedModel. */
   model?: string;
   agentType?: string;
-  role?: string;
+  source?: "project" | "user";
+  path?: string;
+  fingerprint?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
+  reasoning?: string;
+  tools?: string[];
+  explicitModelOverride?: boolean;
   attempt?: number;
   provenance?: "live" | "cached";
   startedAt?: string;

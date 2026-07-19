@@ -5,8 +5,7 @@ import { parseWorkflowScript } from "../src/workflow.js";
 const validScript = `export const meta = {
   name: 'demo_workflow',
   description: 'A useful workflow',
-  model: 'provider/default-model',
-  phases: [{ title: 'Scan', detail: 'Collect inputs', model: 'default' }]
+  phases: [{ title: 'Scan', detail: 'Collect inputs' }]
 }
 
 phase('Scan')
@@ -17,7 +16,7 @@ test("parseWorkflowScript accepts literal workflow metadata", () => {
   const parsed = parseWorkflowScript(validScript);
   assert.equal(parsed.meta.name, "demo_workflow");
   assert.equal(parsed.meta.description, "A useful workflow");
-  assert.deepEqual(parsed.meta.phases, [{ title: "Scan", detail: "Collect inputs", model: "default" }]);
+  assert.deepEqual(parsed.meta.phases, [{ title: "Scan", detail: "Collect inputs" }]);
   assert.match(parsed.body, /phase\('Scan'\)/);
   assert.doesNotMatch(parsed.body, /export const meta/);
 });
@@ -153,20 +152,40 @@ test("parseWorkflowScript rejects phases without title", () => {
   );
 });
 
-test("parseWorkflowScript rejects meta.model with wrong type", () => {
+test("parseWorkflowScript rejects legacy meta, phase, tier, and agent routing with migration guidance", () => {
   assert.throws(
-    () => parseWorkflowScript("export const meta = { name: 'demo', description: 'desc', model: 123 }"),
-    /must be a string/,
+    () => parseWorkflowScript("export const meta = { name: 'demo', description: 'desc', model: 'old' }"),
+    /meta\.model.*migrate each agent\(\) call to opts\.agentType/,
+  );
+  assert.throws(
+    () =>
+      parseWorkflowScript(
+        "export const meta = { name: 'demo', description: 'desc', phases: [{ title: 'Old', model: 'old' }] }",
+      ),
+    /meta\.phases\[\]\.model.*opts\.agentType/,
+  );
+  assert.throws(
+    () =>
+      parseWorkflowScript(
+        "export const meta = { name: 'demo', description: 'desc' }; await agent('x', { tier: 'small' })",
+      ),
+    /opts\.tier.*opts\.agentType/,
+  );
+  assert.throws(
+    () =>
+      parseWorkflowScript(
+        "export const meta = { name: 'demo', description: 'desc' }; await agent('x', { agent: 'reviewer' })",
+      ),
+    /opts\.agent.*opts\.agentType/,
   );
 });
 
-test("parseWorkflowScript still parses a removed/unknown meta field (e.g. whenToUse)", () => {
-  // whenToUse is no longer an official field; a script that still sets it must keep
-  // parsing (it's just ignored), not throw.
-  const parsed = parseWorkflowScript(
-    "export const meta = { name: 'demo', description: 'desc', whenToUse: 'legacy' }\nreturn 1",
+test("parseWorkflowScript rejects unknown metadata fields", () => {
+  assert.throws(
+    () =>
+      parseWorkflowScript("export const meta = { name: 'demo', description: 'desc', whenToUse: 'legacy' }\nreturn 1"),
+    /unsupported meta field: whenToUse/,
   );
-  assert.equal(parsed.meta.name, "demo");
 });
 
 test("parseWorkflowScript rejects nondeterministic APIs", () => {

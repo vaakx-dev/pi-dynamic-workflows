@@ -13,7 +13,6 @@ import {
   registerBuiltinWorkflows,
   registerEffortCommand,
   registerWorkflowCommands,
-  registerWorkflowModelsCommand,
   saveWorkflowSettingsForCwd,
   UsageLimitScheduler,
   WorkflowManager,
@@ -59,18 +58,30 @@ export default function extension(pi: ExtensionAPI) {
   // explicit /workflows run <prompt> manual trigger.
   const effort = createEffortState();
   registerWorkflowCommands(pi, manager, { storage, cwd, effort });
-  registerWorkflowModelsCommand(pi);
   registerBuiltinWorkflows(pi, { cwd, manager });
   registerAllSavedWorkflows(pi, cwd, storage, manager);
   registerEffortCommand(pi, effort);
   // Install the standing-effort input hook once per session.
   let inputHandlingInstalled = false;
+  let sessionModel: string | undefined;
+  let sessionReasoning: ReturnType<ExtensionAPI["getThinkingLevel"]> | undefined;
+
+  const updateSessionModel = () => manager.setMainModel(sessionModel, sessionReasoning);
+
+  pi.on("model_select", (event) => {
+    sessionModel = `${event.model.provider}/${event.model.id}`;
+    updateSessionModel();
+  });
+  pi.on("thinking_level_select", (event) => {
+    sessionReasoning = event.level;
+    updateSessionModel();
+  });
 
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
-    // Tell the manager the session's main model so "explore" agents auto-tier
-    // down to a lighter same-family sibling (e.g. Claude → Haiku).
-    manager.setMainModel(ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined);
-    // Share the host session's model registry so tier/phase routing resolves
+    sessionModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+    sessionReasoning = pi.getThinkingLevel();
+    updateSessionModel();
+    // Share the host session's model registry so named-agent models resolve
     // extension-registered providers (e.g. ollama-cloud) consistently. Set it
     // before activating the tool: the tool's promptGuidelines read the
     // manager's registry lazily, so tool-registry refreshes from here on

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentDefinition, AgentRegistry } from "../src/agent-registry.js";
 import { SharedStore } from "../src/shared-store.js";
-import { runWorkflow } from "../src/workflow.js";
+import { runWorkflow as executeWorkflow, type WorkflowRunOptions } from "../src/workflow.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+function runWorkflow<T = unknown>(script: string, options: WorkflowRunOptions = {}) {
+  return executeWorkflow<T>(script, { agentRegistry: testAgentRegistry(), ...options });
+}
 
 // ─── SharedStore unit tests ───────────────────────────────────────────────────
 
@@ -135,11 +140,11 @@ test("each runWorkflow call gets an isolated SharedStore: run 2 does not see run
 
   const putScript = `
     export const meta = { name: "isolation-put", description: "writes to the store" };
-    return await agent("put", {});
+    return await agent("put", { agentType: "reviewer" });
   `;
   const getScript = `
     export const meta = { name: "isolation-get", description: "reads from the store" };
-    return await agent("get", {});
+    return await agent("get", { agentType: "reviewer" });
   `;
 
   // Run 1 writes "shared_key" into its own store.
@@ -150,7 +155,7 @@ test("each runWorkflow call gets an isolated SharedStore: run 2 does not see run
   assert.equal(readsByRun.get, false, "a second, independent runWorkflow call must not see run 1's store writes");
 });
 
-test("store_put/store_get are injected as systemTools even under a restrictive agentType tools allowlist", async () => {
+test("store_put/store_get are injected as systemTools even under a restrictive agent tools allowlist", async () => {
   let observedToolNames: string[] | undefined;
   let observedSystemToolNames: string[] | undefined;
 
@@ -165,9 +170,12 @@ test("store_put/store_get are injected as systemTools even under a restrictive a
   // A restrictive agentType allowlist that does NOT mention store_put/store_get.
   const restrictiveDef: AgentDefinition = {
     name: "read-only-auditor",
-    tools: ["read_file"], // deliberately narrow — should never include store tools
-    prompt: "You audit code read-only.",
+    description: "Audits code without edits",
+    tools: ["read_file"],
+    body: "You audit code read-only.",
     source: "project",
+    path: ".pi/agents/read-only-auditor.md",
+    fingerprint: "a".repeat(64),
   };
   const agentRegistry: AgentRegistry = new Map([["read-only-auditor", restrictiveDef]]);
 
@@ -179,7 +187,7 @@ test("store_put/store_get are injected as systemTools even under a restrictive a
   await runWorkflow(script, { agent, cwd: process.cwd(), agentRegistry });
 
   // The allowlist passed through to the coding-tool filter is indeed restrictive...
-  assert.deepEqual(observedToolNames, ["read_file"], "agentType.tools allowlist must reach the agent runner");
+  assert.deepEqual(observedToolNames, ["read_file"], "agent.tools allowlist must reach the agent runner");
   // ...but store_put/store_get are still present via systemTools, which bypass
   // the allowlist filter entirely (this is the headline feature of SharedStore).
   assert.ok(observedSystemToolNames?.includes("store_put"), "store_put must be injected despite the allowlist");
@@ -227,12 +235,12 @@ test("nested workflow() concurrent with its parent does not collide on shared-st
     const [, parentResult] = await Promise.all([
       workflow(\`
         export const meta = { name: "nested-collision-inner", description: "inner" };
-        return await agent("put:nestedKey:fromNested", {});
+        return await agent("put:nestedKey:fromNested", { agentType: "reviewer" });
       \`, {}),
-      agent("put:parentKey:fromParent", {}),
+      agent("put:parentKey:fromParent", { agentType: "reviewer" }),
     ]);
-    const gotParent = await agent("get:parentKey");
-    const gotNested = await agent("get:nestedKey");
+    const gotParent = await agent("get:parentKey", { agentType: "reviewer" });
+    const gotNested = await agent("get:nestedKey", { agentType: "reviewer" });
     return { parentResult, gotParent, gotNested };
   `;
 
@@ -300,11 +308,11 @@ test("resume replays parallel-agent deltas additively so no writes are lost", as
   const script = `
     export const meta = { name: "fan-out-resume-test", description: "fan-out resume test" };
     await Promise.all([
-      agent("put:alpha:hello"),
-      agent("put:beta:world"),
+      agent("put:alpha:hello", { agentType: "reviewer" }),
+      agent("put:beta:world", { agentType: "reviewer" }),
     ]);
-    await agent("get:alpha");
-    await agent("get:beta");
+    await agent("get:alpha", { agentType: "reviewer" });
+    await agent("get:beta", { agentType: "reviewer" });
     return "done";
   `;
 

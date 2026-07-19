@@ -20,13 +20,6 @@ import { type AgentHistoryEntry, compactAgentHistory } from "./agent-history.js"
 import { applyToolPolicy } from "./agent-registry.js";
 import { classifyProviderLimit, WorkflowError, WorkflowErrorCode } from "./errors.js";
 import { canonicalModelSpec, resolveModelSpecWithThinking } from "./model-spec.js";
-import {
-  formatTierFallbackNotice,
-  loadModelTierConfig,
-  type ModelTierConfig,
-  type RankableModel,
-  resolveTierModel,
-} from "./model-tier-config.js";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
 import {
   type AgentActivityEvent,
@@ -170,42 +163,9 @@ export async function resolveStructuredOutput<T>(
   );
 }
 
-/**
- * Resolve which concrete model spec a subagent should use. Precedence, most
- * specific first:
- *   1. options.model — an explicit per-agent model (also carries agentType /
- *      phase model, which the workflow layer folds into options.model).
- *   2. options.tier  — resolved via the model-tiers config, falling back to the
- *      session's main model when the tier has no configured entry.
- *   3. DEFAULT TIER — when neither is set but the user has a model-tiers config,
- *      untagged agents default to the "medium" tier so a configured tier set
- *      actually affects the whole workflow (not just agents the script tagged).
- *      Fresh-install medium == the session model, so this is a no-op until the
- *      user customizes tiers via /workflows-models.
- * Returns undefined when nothing applies, so the session default is used.
- *
- * `loadConfig` is injectable for testing; it defaults to reading from disk.
- */
-export function resolveAgentModelSpec(
-  options: { model?: string; tier?: string },
-  mainModel: string | undefined,
-  loadConfig: () => ModelTierConfig | null = loadModelTierConfig,
-  onTierWithoutConfig?: (tier: string) => void,
-): string | undefined {
-  if (options.model) return options.model;
-  const config = loadConfig();
-  if (options.tier) {
-    // Tier requested but unconfigured → it silently falls back to mainModel.
-    // Let the caller surface that (once) so the no-op is discoverable.
-    if (!config) onTierWithoutConfig?.(options.tier);
-    return (config ? resolveTierModel(options.tier, config) : undefined) ?? mainModel;
-  }
-  // Untagged agent: default to the configured medium tier when one exists.
-  if (config) {
-    const medium = resolveTierModel("medium", config);
-    if (medium) return medium;
-  }
-  return undefined;
+/** Return an explicit model override, or undefined to use the session default. */
+export function resolveAgentModelSpec(options: { model?: string }): string | undefined {
+  return options.model;
 }
 
 export interface WorkflowAgentOptions {
@@ -216,16 +176,13 @@ export interface WorkflowAgentOptions {
   session?: Partial<CreateAgentSessionOptions>;
   /** Extra system guidance prepended to every subagent task. */
   instructions?: string;
-  /**
-   * The session's main model (`provider/modelId`). Used as a fallback when
-   * resolving opts.tier and no model-tiers.json config exists. Without this,
-   * a workflow using `{ tier: "small" }` would log a warning and fall through
-   * to the session default when no config is saved yet.
-   */
+  /** The active Pi session model (`provider/modelId`), used when no call or definition model is set. */
   mainModel?: string;
+  /** The active Pi session reasoning level, inherited unless a model spec has an explicit suffix. */
+  mainReasoning?: CreateAgentSessionOptions["thinkingLevel"];
   /**
    * Shared model registry from the host Pi session. When provided, subagents
-   * resolve tier/model specs against the same registry the main session uses,
+   * resolve model specs against the same registry the main session uses,
    * including dynamically-registered providers such as ollama-cloud. Without
    * this, the agent builds an isolated registry from disk and may miss models
    * that are only available via extension registration.
@@ -299,12 +256,14 @@ export function runtimeOf(registry: ModelRegistry): ModelRuntime | undefined {
 
 /**
  * List the user's currently available models (those with auth configured) with
- * the minimal fields tier ranking needs: canonical spec, output price, and
+ * the model fields needed here: canonical spec, output price, and
  * context window. This is the single place the SDK `Model` is projected into
  * the SDK-agnostic `RankableModel`. Best-effort: returns [] if the registry
  * can't be built (or while the disk-backed fallback is still initializing).
  */
-export function listAvailableModels(registry?: ModelRegistry): RankableModel[] {
+export function listAvailableModels(
+  registry?: ModelRegistry,
+): Array<{ spec: string; costOutput?: number; contextWindow?: number }> {
   try {
     const modelRegistry = registry ?? fallbackRegistry;
     if (!modelRegistry) {
@@ -330,23 +289,6 @@ export function listAvailableModels(registry?: ModelRegistry): RankableModel[] {
  */
 export function listAvailableModelSpecs(registry?: ModelRegistry): string[] {
   return listAvailableModels(registry).map((model) => model.spec);
-}
-
-/**
- * Emitted at most once per process: when an agent asks for a tier but no
- * model-tiers.json exists, the tier silently falls back to the session model.
- * Surface that once (with the mapping the user would get by configuring) so the
- * no-op is discoverable. Diagnostics only — never lets a failure break a run.
- */
-let warnedTierUnconfigured = false;
-function warnTierUnconfiguredOnce(mainModel: string | undefined, registry: ModelRegistry): void {
-  if (warnedTierUnconfigured) return;
-  warnedTierUnconfigured = true;
-  try {
-    console.warn(formatTierFallbackNotice(mainModel, listAvailableModels(registry)));
-  } catch {
-    // best-effort diagnostic
-  }
 }
 
 /**
@@ -422,18 +364,15 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
    * a warning is logged. When omitted, the session default applies.
    */
   model?: string;
-  /**
-   * Model tier name (e.g. "small", "medium", "big"). When set (and no explicit
-   * `model` is given), the model is resolved from the user's model-tiers.json
-   * config before `run()` starts, falling back to the session's main model when
-   * the tier has no configured entry. An explicit `model` always takes priority,
-   * so workflow scripts can use `{ tier: "small" }` for coarse routing without
-   * caring which concrete model backs that tier.
-   */
-  tier?: string;
-  /** Called with the resolved model id once known (for display/telemetry). */
+  /** Called with the resolved canonical model id once known (for display/telemetry). */
   onModelResolved?: (modelId: string) => void;
-  /** Called when `model`/`tier`/phase resolved to a spec that wasn't found (fell back to session default). */
+  /** Called once the session has resolved its canonical model, reasoning level, and active tools. */
+  onRuntimeResolved?: (resolution: {
+    model?: string;
+    reasoning?: CreateAgentSessionOptions["thinkingLevel"];
+    tools: string[];
+  }) => void;
+  /** Called when `model` couldn't be resolved and the active Pi session model was used. */
   onModelFallback?: (requestedSpec: string) => void;
   /** Called with a compact snapshot of this subagent's message/tool history. */
   onHistory?: (history: AgentHistoryEntry[]) => void;
@@ -442,14 +381,12 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   /** Run this agent in a different working directory (e.g. an isolated worktree). */
   cwd?: string;
   /**
-   * Restrict the subagent's coding tools to these names (an agentType
+   * Restrict the subagent's coding tools to these names (a named agent
    * definition's `tools` allowlist). Undefined = all coding tools. The
    * structured_output tool is always added after this filter, so a schema
    * still works under a restrictive allowlist.
    */
   toolNames?: string[];
-  /** Remove these coding-tool names after the allowlist (an agentType `disallowedTools` denylist). */
-  disallowedToolNames?: string[];
   /**
    * With `schema`: how many extra repair turns to allow if the model finishes
    * without calling structured_output. Each retry re-prompts (tools restricted to
@@ -457,10 +394,9 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
    */
   maxSchemaRetries?: number;
   /**
-   * Tools that are always injected AFTER the tool-policy filter (`toolNames` /
-   * `disallowedToolNames`), so they are available even under a restrictive
+   * Tools that are always injected AFTER the tool allowlist (`toolNames`), so they are available even under a restrictive
    * allowlist. Used by the workflow runtime to inject shared-store tools into
-   * every agent regardless of its agentType definition.
+   * every named agent definition.
    */
   systemTools?: ToolDefinition[];
   /**
@@ -484,16 +420,11 @@ export class WorkflowAgent {
   private readonly persistAgentSessions: boolean;
   private readonly instructions?: string;
   private readonly mainModel?: string;
+  private readonly mainReasoning?: CreateAgentSessionOptions["thinkingLevel"];
   /** Shared registry from the host session, when provided. */
   private readonly sharedRegistry?: ModelRegistry;
   /** Lazily built once; shares the SDK's agentDir/auth so resolved models are authed. */
   private registry?: ModelRegistry;
-  /**
-   * Memoized model-tiers.json snapshot, boxed so a legitimately-null config
-   * (file absent/invalid) is distinguishable from "not loaded yet". See
-   * loadTierConfig() below for why this is scoped per-instance.
-   */
-  private tierConfigBox?: { value: ModelTierConfig | null };
 
   constructor(options: WorkflowAgentOptions = {}) {
     this.cwd = options.cwd ?? process.cwd();
@@ -502,6 +433,7 @@ export class WorkflowAgent {
     this.persistAgentSessions = options.persistAgentSessions ?? false;
     this.instructions = options.instructions;
     this.mainModel = options.mainModel;
+    this.mainReasoning = options.mainReasoning;
     this.sharedRegistry = options.modelRegistry;
   }
 
@@ -522,38 +454,6 @@ export class WorkflowAgent {
       this.registry = await ensureFallbackRegistry();
     }
     return this.registry;
-  }
-
-  /**
-   * Read+parse ~/.pi/workflows/model-tiers.json at most once for this
-   * instance's lifetime, instead of on every run() call. `resolveAgentModelSpec`
-   * previously received `loadModelTierConfig` directly (sync existsSync +
-   * readFileSync + JSON.parse from disk), which it calls unconditionally for
-   * any agent without an explicit options.model — so a large fan-out did N
-   * redundant synchronous disk reads that blocked the event loop and stalled
-   * concurrent agents' I/O.
-   *
-   * `runWorkflow()` constructs a fresh `WorkflowAgent` per run (see
-   * `new WorkflowAgent(options)` in workflow.ts, unless a caller injects its
-   * own `options.agent` runner — a test-only escape hatch per
-   * WorkflowManagerOptions.agent's doc comment), so a WorkflowAgent instance's
-   * lifetime is one run in production. Memoizing on `this` therefore has the
-   * same scope and lifetime as the agentRegistry snapshot workflow.ts already
-   * takes once per run "for determinism" — the config file isn't expected to
-   * change mid-run, and two different runs (= two different WorkflowAgent
-   * instances) each get their own fresh read of whatever is on disk at the
-   * time, so this does not leak stale config across runs or break tests that
-   * construct fresh agents with different configs.
-   *
-   * `loader` is injectable for tests (defaults to the real disk read); it is
-   * only ever consulted once, on the first call, regardless of what is passed
-   * on later calls.
-   */
-  private loadTierConfig(loader: () => ModelTierConfig | null = loadModelTierConfig): ModelTierConfig | null {
-    if (!this.tierConfigBox) {
-      this.tierConfigBox = { value: loader() };
-    }
-    return this.tierConfigBox.value;
   }
 
   /**
@@ -602,15 +502,11 @@ export class WorkflowAgent {
     // since tools capture their cwd at construction and can't be relocated.
     const runCwd = options.cwd ?? this.cwd;
     const baseTools = runCwd === this.cwd ? this.baseTools : createCodingTools(runCwd);
-    // Apply the agentType tool policy BEFORE adding structured_output, so a
+    // Apply the named agent tool policy BEFORE adding structured_output, so a
     // restrictive allowlist never strips the schema tool.
-    const customTools: ToolDefinition[] = applyToolPolicy(
-      [...baseTools, ...(options.tools ?? [])],
-      options.toolNames,
-      options.disallowedToolNames,
-    );
+    const customTools: ToolDefinition[] = applyToolPolicy([...baseTools, ...(options.tools ?? [])], options.toolNames);
 
-    // System tools bypass the allowlist/denylist filter (e.g. shared-store tools).
+    // System tools bypass the allowlist (e.g. shared-store tools).
     if (options.systemTools?.length) {
       customTools.push(...options.systemTools);
     }
@@ -620,24 +516,13 @@ export class WorkflowAgent {
     }
 
     // Per-run modelRegistry wins over the constructor's shared registry, then
-    // the lazily-built disk fallback. Used for tier diagnostics, model
+    // the lazily-built disk fallback. Used for model
     // resolution, and the subagent session's runtime below.
     const modelRegistry = await this.getRegistry(options.modelRegistry);
 
-    // Resolve the model spec (explicit model > tier > session default). This
-    // composes with phase-based routing in workflow.ts, which only supplies
-    // options.model when a phase pattern matches — so an explicit model wins.
-    const modelSpec = resolveAgentModelSpec(
-      options,
-      this.mainModel,
-      () => this.loadTierConfig(),
-      () => warnTierUnconfiguredOnce(this.mainModel, modelRegistry),
-    );
-
-    // Resolve a requested model spec to a Model object. Specs use Pi CLI-style
-    // parsing, including an optional :thinking suffix such as gpt-5.5:xhigh.
-    // A given-but-unresolved spec falls back to the session default (with a
-    // warning) rather than failing.
+    // Model precedence is explicit call/definition model, then the active Pi
+    // session model and reasoning. A model suffix overrides session reasoning.
+    const modelSpec = resolveAgentModelSpec(options);
     let resolvedModel: Model<any> | undefined;
     let resolvedThinkingLevel: CreateAgentSessionOptions["thinkingLevel"] | undefined;
     if (modelSpec) {
@@ -645,12 +530,16 @@ export class WorkflowAgent {
       if (resolved.warning) console.warn(`[workflow] ${resolved.warning}`);
       if (resolved.model) {
         resolvedModel = resolved.model;
-        resolvedThinkingLevel = resolved.thinkingLevel;
-        options.onModelResolved?.(resolved.resolvedSpec ?? canonicalModelSpec(resolved.model));
+        resolvedThinkingLevel = resolved.thinkingLevel ?? this.mainReasoning;
       } else {
-        console.warn(`[workflow] model "${modelSpec}" not found; using session default`);
+        console.warn(`[workflow] model "${modelSpec}" not found; using the active Pi session model`);
         options.onModelFallback?.(modelSpec);
       }
+    }
+    if (!resolvedModel && this.mainModel) {
+      const sessionDefault = resolveModelSpecWithThinking(this.mainModel, modelRegistry);
+      resolvedModel = sessionDefault.model;
+      resolvedThinkingLevel = this.mainReasoning;
     }
 
     const agentDir = getAgentDir();
@@ -698,6 +587,14 @@ export class WorkflowAgent {
       // Per-call model/thinking wins over any sessionOptions defaults.
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(resolvedThinkingLevel ? { thinkingLevel: resolvedThinkingLevel } : {}),
+    });
+
+    const canonicalModel = session.model ? canonicalModelSpec(session.model) : undefined;
+    if (canonicalModel) options.onModelResolved?.(canonicalModel);
+    options.onRuntimeResolved?.({
+      model: canonicalModel,
+      reasoning: session.thinkingLevel,
+      tools: session.getActiveToolNames(),
     });
 
     // Name the persisted session so it's identifiable in session pickers.

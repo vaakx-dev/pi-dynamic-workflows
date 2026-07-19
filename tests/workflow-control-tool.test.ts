@@ -10,7 +10,8 @@ function run(status: RunStatus = "running", runId = "audit-abc123"): PersistedRu
   return {
     runId,
     workflowName: "audit",
-    script: "export const meta = { name: 'audit', description: 'audit' }; return await agent('x')",
+    script:
+      "export const meta = { name: 'audit', description: 'audit' }; return await agent('x', { agentType: 'reviewer' })",
     status,
     phases: ["Inspect"],
     currentPhase: "Inspect",

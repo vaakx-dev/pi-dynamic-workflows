@@ -5,7 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 import type { AgentUsage } from "../src/agent.js";
 import { WorkflowError, WorkflowErrorCode } from "../src/errors.js";
-import { WorkflowManager } from "../src/workflow-manager.js";
+import { WorkflowManager as BaseWorkflowManager, type WorkflowManagerOptions } from "../src/workflow-manager.js";
+import { testAgentRegistry } from "./helpers/agents.js";
+
+class WorkflowManager extends BaseWorkflowManager {
+  constructor(options: WorkflowManagerOptions = {}) {
+    super({ agentRegistry: testAgentRegistry(), ...options });
+  }
+}
+
 import { withFakeHomeAsync } from "./helpers/fake-home.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,7 +57,7 @@ function deferredAgent() {
 
 const oneAgentScript = `export const meta = { name: 'tracked_demo', description: 'one agent' }
 phase('Work')
-const a = await agent('do it', { label: 'a' })
+const a = await agent('do it', { agentType: 'reviewer', label: 'a' })
 return { a }`;
 
 /** Run each manager test with isolated cwd and HOME so workflow state is isolated. */
@@ -172,8 +180,8 @@ test(
     manager.on("error", () => {});
 
     const twoAgentScript = `export const meta = { name: 'two_agent', description: 'two agents test' }
-const a = await agent('first', { label: 'first' })
-const b = await agent('second', { label: 'second' })
+const a = await agent('first', { agentType: 'reviewer', label: 'first' })
+const b = await agent('second', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     const { runId, promise } = manager.startInBackground(twoAgentScript);
@@ -387,8 +395,8 @@ test(
     manager.on("error", () => {});
 
     const twoAgentScript = `export const meta = { name: 'two_agent', description: 'two agents test' }
-const a = await agent('first', { label: 'first' })
-const b = await agent('second', { label: 'second' })
+const a = await agent('first', { agentType: 'reviewer', label: 'first' })
+const b = await agent('second', { agentType: 'reviewer', label: 'second' })
 return { a, b }`;
 
     const { runId, promise: origPromise } = manager.startInBackground(twoAgentScript);
@@ -564,7 +572,7 @@ test(
   withTempCwd(async (cwd) => {
     // Script that uses args
     const argsScript = `export const meta = { name: 'args_demo', description: 'args test' }
-const a = await agent('do it', { label: 'a' })
+const a = await agent('do it', { agentType: 'reviewer', label: 'a' })
 return { args, a }`;
 
     const manager = new WorkflowManager({ cwd, agent: fakeAgent({ total: 50 }) });

@@ -5,7 +5,14 @@ export { listAvailableModelSpecs, listAvailableModels, WorkflowAgent } from "./a
 export type { AgentHistoryEntry, AgentHistoryKind, AgentHistoryRole } from "./agent-history.js";
 export { compactAgentHistory } from "./agent-history.js";
 export type { AgentDefinition, AgentRegistry } from "./agent-registry.js";
-export { applyToolPolicy, listAgentTypes, loadAgentRegistry, resolveAgentType } from "./agent-registry.js";
+export {
+  applyToolPolicy,
+  listAgentTypes,
+  loadAgentRegistry,
+  parseAgentDefinition,
+  resolveAgentType,
+  snapshotAgentRegistry,
+} from "./agent-registry.js";
 export { registerBuiltinWorkflows } from "./builtin-commands.js";
 export { generateCodeReviewWorkflow, MAX_DIFF_CHARS } from "./code-review.js";
 export * from "./config.js";
@@ -45,8 +52,6 @@ export {
 } from "./errors.js";
 export type { WorkflowLogger, WorkflowLoggerOptions } from "./logger.js";
 export { createWorkflowLogger } from "./logger.js";
-export type { ModelRoute, ModelRoutingConfig } from "./model-routing.js";
-export { parseModelRoutingFromMeta, resolveModelForPhase } from "./model-routing.js";
 export type { ModelThinkingLevel, ResolvedModelSpec } from "./model-spec.js";
 export {
   canonicalModelSpec,
@@ -56,16 +61,6 @@ export {
   splitModelSpecThinking,
   THINKING_LEVELS,
 } from "./model-spec.js";
-export type { ModelTierConfig, RankableModel } from "./model-tier-config.js";
-export {
-  buildDefaultTierConfig,
-  formatTierFallbackNotice,
-  getModelTierConfigPath,
-  loadModelTierConfig,
-  resolveTierModel,
-  saveModelTierConfig,
-  sortedTierNames,
-} from "./model-tier-config.js";
 export type { PersistedRunState, RunPersistence, RunStatus } from "./run-persistence.js";
 export { createRunPersistence, generateRunId } from "./run-persistence.js";
 export {
@@ -151,6 +146,5 @@ export {
   renderNavigator,
   type ViewKind,
 } from "./workflow-ui.js";
-export { registerWorkflowModelsCommand } from "./workflows-models-command.js";
 export type { Worktree } from "./worktree.js";
 export { createWorktree, removeWorktree } from "./worktree.js";

@@ -69,7 +69,7 @@ export function canonicalModelSpec(model: Model<Api>): string {
 }
 
 /**
- * Split a stored tier spec for display/editing. Exact known model specs win, so
+ * Split a stored model spec for display/editing. Exact known model specs win, so
  * model ids that legitimately contain colons are not mistaken for thinking.
  */
 export function splitModelSpecThinking(
@@ -192,7 +192,7 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 }
 
 /**
- * Resolve a workflow model-tier/agent model string with the same user-facing
+ * Resolve a workflow agent model string with the same user-facing
  * grammar as Pi CLI `--model`: `provider/modelId[:thinking]`, bare model ids,
  * fuzzy patterns, and exact colon-containing model ids.
  */
@@ -304,6 +304,6 @@ export function resolveModelSpecWithThinking(
   return {
     requestedSpec,
     warning,
-    error: `Model "${display}" not found. Use /workflows-models to choose an available model.`,
+    error: `Model "${display}" not found. Choose an available model.`,
   };
 }
